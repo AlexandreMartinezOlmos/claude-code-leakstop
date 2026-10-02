@@ -31,6 +31,8 @@ export type ScanResult = {
   findings: Finding[]
   /** True when the text was over MAX_SCAN_CHARS and nothing was scanned. */
   isSkipped: boolean
+  /** True when the custom rules ran out of their time budget and did not cover all the text. */
+  isPartial: boolean
 }
 
 export type ScanOptions = {
@@ -94,6 +96,9 @@ export function classifyPath(path: string): PathClass | undefined {
   }
   return undefined
 }
+
+/** Firebase's client config files: the Google API key in them identifies the app and is committed by design, so it only warns. */
+const FIREBASE_CLIENT_FILES = new Set(['googleservice-info.plist', 'google-services.json'])
 
 const LOCKFILES = new Set([
   'package-lock.json',
@@ -160,6 +165,36 @@ export function isFalsePositive(value: string): boolean {
 
 // --- Scanning --------------------------------------------------------------
 
+/**
+ * Custom rules come from the repository, so they run under a cost bound whatever
+ * they are: over windows of this many characters, overlapping by the difference
+ * with STRIDE, and within a total time budget. A slow pattern can then cost at
+ * most a window's worth per window, and never the hook's 10 seconds.
+ */
+const WINDOW = 600
+const STRIDE = 400
+const CUSTOM_BUDGET_MS = 500
+
+type Budget = { deadline: number; isPartial: boolean }
+
+function* windowedMatches(regex: RegExp, text: string, budget: Budget): Generator<RegExpMatchArray> {
+  const seen = new Set<number>()
+  for (let from = 0; from < text.length; from += STRIDE) {
+    if (performance.now() > budget.deadline) {
+      budget.isPartial = true
+      return
+    }
+    for (const match of text.slice(from, from + WINDOW).matchAll(regex)) {
+      const start = from + (match.index ?? 0)
+      if (seen.has(start)) continue
+      seen.add(start)
+      match.index = start
+      yield match
+    }
+    if (from + WINDOW >= text.length) return
+  }
+}
+
 /** 1-based line of each offset, from a table of line starts built once. */
 function lineIndex(text: string): (offset: number) => number {
   const starts = [0]
@@ -180,7 +215,7 @@ const overlaps = (a: Finding, b: Finding): boolean => a.start < b.end && b.start
 
 /** Scans `text` for secrets. Findings come back in order of position. */
 export function scanText(text: string, options: ScanOptions = {}): ScanResult {
-  if (text.length > MAX_SCAN_CHARS) return { findings: [], isSkipped: true }
+  if (text.length > MAX_SCAN_CHARS) return { findings: [], isSkipped: true, isPartial: false }
 
   const name = options.path === undefined ? '' : baseName(options.path)
   const rules: Rule[] = [...RULES, ...(options.extraRules ?? [])]
@@ -191,10 +226,12 @@ export function scanText(text: string, options: ScanOptions = {}): ScanResult {
 
   const lineOf = lineIndex(text)
   const found: Finding[] = []
+  const budget: Budget = { deadline: performance.now() + CUSTOM_BUDGET_MS, isPartial: false }
 
   for (const rule of rules) {
     if (isLockfile && rule.isGeneric) continue
-    for (const match of text.matchAll(rule.regex)) {
+    const matches = rule.id.startsWith('custom:') ? windowedMatches(rule.regex, text, budget) : text.matchAll(rule.regex)
+    for (const match of matches) {
       const groupValue = rule.groups?.map((g) => match[g]).find((v) => v !== undefined)
       const value = rule.groups === undefined ? match[0] : groupValue
       if (value === undefined || value === '') continue
@@ -206,7 +243,7 @@ export function scanText(text: string, options: ScanOptions = {}): ScanResult {
       found.push({
         ruleId: rule.id,
         label: rule.label,
-        severity: rule.severity,
+        severity: rule.id === 'google-api-key' && FIREBASE_CLIENT_FILES.has(name) ? 'medium' : rule.severity,
         line: lineOf(start),
         start,
         end: start + match[0].length,
@@ -221,7 +258,7 @@ export function scanText(text: string, options: ScanOptions = {}): ScanResult {
   const precise = found.filter((f) => !f.isGeneric)
   const findings = [...precise, ...found.filter((f) => f.isGeneric && !precise.some((p) => overlaps(f, p)))]
   findings.sort((a, b) => a.start - b.start)
-  return { findings, isSkipped: false }
+  return { findings, isSkipped: false, isPartial: budget.isPartial }
 }
 
 /** Write: the whole content and the path. */

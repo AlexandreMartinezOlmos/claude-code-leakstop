@@ -5,7 +5,7 @@
 // is not being leaked.
 
 import { scanText } from './detect.ts'
-import type { Finding } from './detect.ts'
+import type { Finding, Rule } from './detect.ts'
 
 export type AddedFile = {
   path: string
@@ -67,12 +67,12 @@ export type DiffScan = {
 }
 
 /** Scans each file's added lines; a finding points at the real line in the file. */
-export function scanDiff(diff: string): DiffScan {
+export function scanDiff(diff: string, extraRules: readonly Rule[] = []): DiffScan {
   const findings: DiffFinding[] = []
   let isSkipped = false
   for (const file of addedLines(diff)) {
     if (file.lines.length === 0) continue
-    const result = scanText(file.lines.join('\n'), { path: file.path })
+    const result = scanText(file.lines.join('\n'), { path: file.path, extraRules })
     if (result.isSkipped) {
       isSkipped = true
       continue
