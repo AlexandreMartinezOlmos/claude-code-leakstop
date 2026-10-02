@@ -268,7 +268,7 @@ test('no value ever reaches the state, the question or the denial', async ($, on
 })
 
 test('other tools are not touched', async ($, on) => {
-  on('tool.call', { tool: 'Read' }, () => ({ result: 'ok' }))
-  const r = await $.tool.call({ tool: 'Read', file_path: '.env' })
+  toolsRun(on)
+  const r = await $.tool.call({ tool: 'Read', file_path: 'src/index.ts' })
   expect(ran(r)).toBe(true)
 })

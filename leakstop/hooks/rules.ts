@@ -142,6 +142,15 @@ export const RULES: readonly Rule[] = [
     prefix: 'eyJ',
   },
   {
+    // curl -H "Authorization: Bearer <literal>". A variable (`$TOKEN`) never matches.
+    id: 'authorization-header',
+    label: 'Authorization header credential',
+    severity: 'critical',
+    regex: /\bAuthorization["']?\s*[:=]\s*["']?(?:Bearer|Basic|Token)\s+([A-Za-z0-9._~+/=-]{20,})/gi,
+    groups: [1],
+    minEntropy: 3,
+  },
+  {
     // A suspicious key name, a separator and a high-entropy value. The value is
     // quoted (groups 1 and 2) or bare (group 3, which must also contain a digit
     // so identifiers such as `getApiKeyFromConfig` do not count).
