@@ -111,6 +111,7 @@ export function gitScript(on: any, first: (argv: string[], init?: any) => GitRep
  * paths before the event); any other path cannot be read.
  */
 export function disk(on: any, files: Record<string, string>): void {
+  on('fs.exists', (_$: any, e: any) => ({ value: Object.keys(files).some((k) => e.path === k || e.path.endsWith(`/${k}`)) }))
   on('fs.read', (_$: any, e: any) => {
     const key = Object.keys(files)
       .filter((k) => e.path === k || e.path.endsWith(`/${k}`))

@@ -12,11 +12,12 @@
 
 import type { EngineInterface, Register, ToolCallInput } from 'claude-code'
 
-import type { Decision, StoredFinding } from '../types'
+import type { Decision, StoredConfig, StoredFinding } from '../types'
 import { analyzeCommand } from './commands.ts'
+import { EMPTY_CONFIG, matchesAny, parseConfig, toRule } from './config.ts'
 import type { CommandFacts, GitOp } from './commands.ts'
 import { classifyPath, scanEdit, scanText, scanWrite } from './detect.ts'
-import type { ScanResult } from './detect.ts'
+import type { Rule, ScanResult } from './detect.ts'
 import { scanDiff } from './diff.ts'
 import type { DiffFinding } from './diff.ts'
 import { describe, fingerprint } from './mask.ts'
@@ -42,6 +43,7 @@ const findingsRef = { plugin: 'leakstop', key: 'findings' } as const
 const allowOnceRef = { plugin: 'leakstop', key: 'allowOnce' } as const
 const pausedRef = { plugin: 'leakstop', key: 'paused' } as const
 const bannerRef = { plugin: 'leakstop', key: 'banner' } as const
+const configRef = { plugin: 'leakstop', key: 'config' } as const
 
 const PANE = 'leakstop'
 const MAX_BANNER = 5
@@ -141,8 +143,40 @@ async function rememberAllowOnce($: EngineInterface, fingerprints: readonly stri
   await $.state.set(allowOnceRef, [...new Set([...value, ...fingerprints])].slice(-MAX_ALLOW_ONCE))
 }
 
-/** Fingerprints allowed for this session, plus the ones the user allowed for good. */
-async function allowedFingerprints($: EngineInterface): Promise<Set<string>> {
+/** Reads the project's `.leakstop.json` once, at session start. A missing file is not a problem; a bad one is reported and the defaults apply. */
+async function loadConfig($: EngineInterface): Promise<void> {
+  let config: StoredConfig = EMPTY_CONFIG
+  let exists = false
+  try {
+    exists = await $.fs.exists('.leakstop.json')
+  } catch {
+    exists = false
+  }
+  if (exists) {
+    try {
+      const content = await $.fs.read('.leakstop.json')
+      config = typeof content === 'string' ? parseConfig(content) : { ...EMPTY_CONFIG, warnings: ['.leakstop.json could not be read as text, so the defaults apply'] }
+    } catch {
+      config = { ...EMPTY_CONFIG, warnings: ['.leakstop.json could not be read (is it over 4 MiB?), so the defaults apply'] }
+    }
+  }
+  await $.state.set(configRef, config)
+  for (const warning of config.warnings.slice(0, 5)) $.ui.log(`LeakStop: .leakstop.json: ${warning}`)
+}
+
+async function getConfig($: EngineInterface): Promise<StoredConfig> {
+  const { value } = await $.state.get(configRef)
+  return value ?? EMPTY_CONFIG
+}
+
+/** The project's custom rules, compiled. */
+const customRules = (config: StoredConfig): Rule[] => config.customRules.map(toRule).filter((rule): rule is Rule => rule !== undefined)
+
+/** Medium findings in a path the project told us to ignore are dropped; critical ones never are. */
+const isRelaxed = (config: StoredConfig, severity: string, path: string): boolean => severity === 'medium' && matchesAny(path, config.ignorePaths)
+
+/** Fingerprints allowed for this session, the ones the user allowed for good and the ones the project allows. */
+async function allowedFingerprints($: EngineInterface, config: StoredConfig): Promise<Set<string>> {
   const { value: once = [] } = await $.state.get(allowOnceRef)
   let stored: unknown
   try {
@@ -151,7 +185,7 @@ async function allowedFingerprints($: EngineInterface): Promise<Set<string>> {
     stored = undefined
   }
   const permanent = Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : []
-  return new Set([...once, ...permanent])
+  return new Set([...once, ...permanent, ...config.allowFingerprints])
 }
 
 /** The user's answer, or `undefined` when nobody could answer (dismissed, `claude -p`, no interface). */
@@ -253,8 +287,10 @@ const isInScope = (file: string, paths: readonly string[]): boolean => paths.som
 // --- Bash checks -------------------------------------------------------------
 
 /** A literal secret inside the command: a `curl` header, an `export`, a `--build-arg`, a heredoc. */
-async function checkSecrets($: EngineInterface, command: string, mode: Mode, allowed: ReadonlySet<string>): Promise<Verdict> {
-  const found = scanText(command).findings
+async function checkSecrets($: EngineInterface, command: string, mode: Mode, allowed: ReadonlySet<string>, config: StoredConfig): Promise<Verdict> {
+  const scan = scanText(command, { extraRules: customRules(config) })
+  if (scan.isPartial) $.ui.log('LeakStop: the custom rules were too slow and did not cover the whole command')
+  const found = scan.findings
   if (found.length === 0) return undefined
   const masked = (await Promise.all(found.map(describe))).filter((f) => !allowed.has(f.fingerprint))
   if (masked.length === 0) return undefined
@@ -365,7 +401,7 @@ async function checkGitAdd($: EngineInterface, op: Extract<GitOp, { kind: 'add' 
 type Pending = { findings: DiffFinding[]; isTruncated: boolean }
 
 /** What a commit is about to contain: the staged diff and, when the command stages first, the rest. */
-async function pendingForCommit($: EngineInterface, op: Extract<GitOp, { kind: 'commit' }>): Promise<Pending> {
+async function pendingForCommit($: EngineInterface, op: Extract<GitOp, { kind: 'commit' }>, config: StoredConfig): Promise<Pending> {
   const cached = await git($, ['diff', '--cached', '--no-color', '-U0'], op.dir)
   if (!cached.isOk) return { findings: [], isTruncated: false }
   const diffs = [cached.stdout]
@@ -384,7 +420,8 @@ async function pendingForCommit($: EngineInterface, op: Extract<GitOp, { kind: '
     isTruncated ||= unstaged.isTruncated
   }
 
-  const findings = scanDiff(diffs.join('\n')).findings
+  const extraRules = customRules(config)
+  const findings = scanDiff(diffs.join('\n'), extraRules).findings
 
   // New files that an earlier `git add` in the same command would stage.
   if (stagesAll || stagedPaths.length > 0) {
@@ -393,7 +430,7 @@ async function pendingForCommit($: EngineInterface, op: Extract<GitOp, { kind: '
     for (const file of files.slice(0, MAX_UNTRACKED_READ)) {
       try {
         const content = await $.fs.read(op.dir === undefined ? file : `${op.dir}/${file}`)
-        if (typeof content === 'string') for (const finding of scanText(content, { path: file }).findings) findings.push({ ...finding, path: file })
+        if (typeof content === 'string') for (const finding of scanText(content, { path: file, extraRules }).findings) findings.push({ ...finding, path: file })
       } catch {
         // Unreadable or over 4 MiB: skipped, as the spec says.
       }
@@ -403,18 +440,18 @@ async function pendingForCommit($: EngineInterface, op: Extract<GitOp, { kind: '
 }
 
 /** What a push is about to publish: the added lines of every commit no remote has. */
-async function pendingForPush($: EngineInterface, op: Extract<GitOp, { kind: 'push' }>): Promise<Pending> {
+async function pendingForPush($: EngineInterface, op: Extract<GitOp, { kind: 'push' }>, config: StoredConfig): Promise<Pending> {
   const log = await git($, ['log', '-p', '--no-color', '--format=', 'HEAD', '--not', '--remotes'], op.dir)
   if (!log.isOk) return { findings: [], isTruncated: false }
-  return { findings: scanDiff(log.stdout).findings, isTruncated: log.isTruncated }
+  return { findings: scanDiff(log.stdout, customRules(config)).findings, isTruncated: log.isTruncated }
 }
 
 /** Secrets in what is about to be committed or pushed: blocked without asking. */
-async function checkPublish($: EngineInterface, kind: 'commit' | 'push', pending: Pending, mode: Mode, allowed: ReadonlySet<string>): Promise<Verdict> {
+async function checkPublish($: EngineInterface, kind: 'commit' | 'push', pending: Pending, mode: Mode, allowed: ReadonlySet<string>, config: StoredConfig): Promise<Verdict> {
   if (pending.isTruncated) $.ui.log('LeakStop: the diff is larger than 4 MiB, so only the first 4 MiB was scanned')
   if (pending.findings.length === 0) return undefined
   const described = await Promise.all(pending.findings.map(async (f) => ({ ...(await describe(f)), path: f.path })))
-  const masked = described.filter((f) => !allowed.has(f.fingerprint))
+  const masked = described.filter((f) => !allowed.has(f.fingerprint) && !isRelaxed(config, f.severity, f.path))
   if (masked.length === 0) return undefined
   const destination: Destination = kind === 'commit' ? 'git-commit' : 'git-push'
   return settle($, {
@@ -429,10 +466,10 @@ async function checkPublish($: EngineInterface, kind: 'commit' | 'push', pending
   })
 }
 
-async function checkGit($: EngineInterface, op: GitOp, mode: Mode, allowed: ReadonlySet<string>): Promise<Verdict> {
+async function checkGit($: EngineInterface, op: GitOp, mode: Mode, allowed: ReadonlySet<string>, config: StoredConfig): Promise<Verdict> {
   if (op.kind === 'add') return checkGitAdd($, op, mode, allowed)
-  if (op.kind === 'commit') return checkPublish($, 'commit', await pendingForCommit($, op), mode, allowed)
-  return checkPublish($, 'push', await pendingForPush($, op), mode, allowed)
+  if (op.kind === 'commit') return checkPublish($, 'commit', await pendingForCommit($, op, config), mode, allowed, config)
+  return checkPublish($, 'push', await pendingForPush($, op, config), mode, allowed, config)
 }
 
 // --- Pure helpers of this file (no `$`) -------------------------------------
@@ -440,15 +477,15 @@ async function checkGit($: EngineInterface, op: GitOp, mode: Mode, allowed: Read
 type Call = { tool: WriteTool; path: string; result: ScanResult; oldString?: string }
 
 /** What the write is about to put on disk, scanned. `undefined`: nothing is written. */
-function scanCall(e: ToolCallInput): Call | undefined {
+function scanCall(e: ToolCallInput, extraRules: readonly Rule[]): Call | undefined {
   switch (e.tool) {
     case 'Write':
-      return { tool: 'Write', path: e.file_path, result: scanWrite(e.file_path, e.content) }
+      return { tool: 'Write', path: e.file_path, result: scanWrite(e.file_path, e.content, { extraRules }) }
     case 'Edit':
-      return { tool: 'Edit', path: e.file_path, result: scanEdit(e.file_path, e.old_string, e.new_string), oldString: e.old_string }
+      return { tool: 'Edit', path: e.file_path, result: scanEdit(e.file_path, e.old_string, e.new_string, { extraRules }), oldString: e.old_string }
     case 'NotebookEdit':
       return typeof e.new_source === 'string'
-        ? { tool: 'NotebookEdit', path: e.notebook_path, result: scanText(e.new_source, { path: e.notebook_path }) }
+        ? { tool: 'NotebookEdit', path: e.notebook_path, result: scanText(e.new_source, { path: e.notebook_path, extraRules }) }
         : undefined
     default:
       return undefined
@@ -472,6 +509,7 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'leakstop', description: 'Show LeakStop findings, pause or resume protection, or allow a finding' })
+    await loadConfig($)
     return next(e)
   })
 
@@ -485,6 +523,7 @@ export const register: Register = (on, options) => {
     const args = parseArgs(e.args)
     const { value: findings = [] } = await $.state.get(findingsRef)
     const { value: paused = false } = await $.state.get(pausedRef)
+    const config = await getConfig($)
 
     if (args.kind === 'open') {
       await clearBanner($)
@@ -494,7 +533,7 @@ export const register: Register = (on, options) => {
       } catch {
         isPlaced = false
       }
-      return isPlaced ? { text: '' } : { text: summaryText(findings, paused) }
+      return isPlaced ? { text: '' } : { text: summaryText(findings, paused, config.warnings) }
     }
     if (args.kind === 'usage') return { text: USAGE }
 
@@ -558,7 +597,8 @@ export const register: Register = (on, options) => {
   })
 
   on('tool.call', { tool: ['Edit', 'Write', 'NotebookEdit'] }, async ($, e, next) => {
-    const call = scanCall(e)
+    const config = await getConfig($)
+    const call = scanCall(e, customRules(config))
     if (call === undefined) return next(e)
     const cwd = await sessionCwd($)
     const shownPath = displayPathOf(call.path, cwd)
@@ -576,13 +616,15 @@ export const register: Register = (on, options) => {
       $.ui.log(`LeakStop: ${shownPath} is larger than 4 MiB and was not scanned`)
       return next(e)
     }
+    if (call.result.isPartial) $.ui.log(`LeakStop: the custom rules were too slow and did not cover all of ${shownPath}`)
     if (call.result.findings.length === 0) return next(e)
 
     const offset = call.oldString === undefined ? 0 : await lineOffset($, call.path, call.oldString)
     const described = await Promise.all(call.result.findings.map(describe))
-    const masked = described.map((f) => ({ ...f, line: f.line + offset }))
+    const masked = described.map((f) => ({ ...f, line: f.line + offset })).filter((f) => !isRelaxed(config, f.severity, shownPath))
+    if (masked.length === 0) return next(e)
 
-    const allowed = await allowedFingerprints($)
+    const allowed = await allowedFingerprints($, config)
     const pending = masked.filter((f) => !allowed.has(f.fingerprint))
     if (pending.length === 0) {
       await record($, call.tool, shownPath, masked, 'allowed')
@@ -616,10 +658,11 @@ export const register: Register = (on, options) => {
     const { value: paused = false } = await $.state.get(pausedRef)
     if (paused) return next(e)
 
-    const allowed = await allowedFingerprints($)
+    const config = await getConfig($)
+    const allowed = await allowedFingerprints($, config)
     let command = e.command
 
-    const secrets = await checkSecrets($, e.command, mode, allowed)
+    const secrets = await checkSecrets($, e.command, mode, allowed, config)
     if (secrets !== undefined && 'deny' in secrets) return secrets
 
     const sensitive = await checkSensitive($, facts, mode, allowed)
@@ -629,7 +672,7 @@ export const register: Register = (on, options) => {
     }
 
     for (const op of facts.git) {
-      const verdict = await checkGit($, op, mode, allowed)
+      const verdict = await checkGit($, op, mode, allowed, config)
       if (verdict !== undefined && 'deny' in verdict) return verdict
     }
 
@@ -643,7 +686,7 @@ export const register: Register = (on, options) => {
     if (paused) return next(e)
 
     const note = await operation('sensitive-file-read', 'Sensitive file read', `path:${e.file_path}`)
-    const allowed = await allowedFingerprints($)
+    const allowed = await allowedFingerprints($, await getConfig($))
     if (allowed.has(note.fingerprint)) return next(e)
 
     const cwd = await sessionCwd($)

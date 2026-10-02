@@ -17,6 +17,17 @@ for (const [ruleId, make] of Object.entries(PROVIDER_TOKENS)) {
   })
 }
 
+test('a Google key in Firebase client config files only warns; anywhere else it is critical', () => {
+  const key = PROVIDER_TOKENS['google-api-key']?.() ?? ''
+  const plist = `<key>API_KEY</key>\n<string>${key}</string>`
+  for (const path of ['Outin/Supporting Files/GoogleService-Info.plist', 'app/google-services.json']) {
+    expect(scanText(plist, { path }).findings.map((f) => f.severity)).toEqual(['medium'])
+  }
+  expect(scanText(plist, { path: 'src/config.ts' }).findings.map((f) => f.severity)).toEqual(['critical'])
+  // Only the Google key is relaxed there.
+  expect(scanText(`k = "${PROVIDER_TOKENS['github-token']?.()}"`, { path: 'google-services.json' }).findings[0]?.severity).toBe('critical')
+})
+
 test('detects a private key and requires a body', () => {
   const key = fakePrivateKey()
   const { findings } = scanText(`a\nb\n${key}\nc`)
@@ -94,7 +105,7 @@ test('a real-looking key is never dismissed as a placeholder for a short fragmen
   ]
   for (const key of cases) expect(scanText(`k = "${key}"`).findings.length).toBe(1)
   // Real placeholders have the same fragments and little entropy.
-  for (const placeholder of [`sk-ant-${'x'.repeat(24)}`, `sk-proj-my_key_goes_here_abcd`, `ghp_${'0'.repeat(37)}`]) {
+  for (const placeholder of [`sk-ant-${'x'.repeat(24)}`, ['sk-proj-', 'my_key_goes_here_abcd'].join(''), `ghp_${'0'.repeat(37)}`]) {
     expect(scanText(`k = "${placeholder}"`).findings).toEqual([])
   }
 })
