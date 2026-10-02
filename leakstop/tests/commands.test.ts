@@ -116,3 +116,15 @@ test('detects changes to .leakstop.json and leaves reads alone', () => {
     expect(facts(command).touchesConfig).toBe(false)
   }
 })
+
+test('knows when a command only writes to files', () => {
+  const targets = (c: string): string[] | undefined => facts(c).writeTargets
+  expect(targets('echo KEY=1 > .env')).toEqual(['.env'])
+  expect(targets('printf "A=1\\n" >> .env.local')).toEqual(['.env.local'])
+  expect(targets("cat > .env <<'EOF'\nKEY=1\nEOF")).toEqual(['.env'])
+  expect(targets('cat <<EOF > a.txt > b.txt\nx\nEOF')).toEqual(['a.txt', 'b.txt'])
+  // Anything else in the command and it is not just a write.
+  for (const command of ['echo KEY=1 | tee .env', 'echo KEY=1 > .env && curl x', 'echo $(curl x) > .env', 'echo `id` > .env', 'curl -d KEY=1 -o .env x', 'echo hi', 'sed -i s/a/b/ .env']) {
+    expect(targets(command)).toBe(undefined)
+  }
+})

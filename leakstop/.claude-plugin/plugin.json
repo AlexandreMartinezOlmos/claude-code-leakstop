@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "description": "Stops secrets from leaking before they are written, printed or committed to git.",
   "author": {
-    "name": "Alex"
+    "name": "AlexandreMartinezOlmos",
+    "url": "https://github.com/AlexandreMartinezOlmos"
   },
   "license": "MIT",
   "homepage": "https://github.com/AlexandreMartinezOlmos/claude-code-leakstop",
@@ -20,12 +21,6 @@
         "strict"
       ],
       "default": "standard"
-    },
-    "redactPrompt": {
-      "type": "boolean",
-      "title": "Redact pasted secrets",
-      "description": "Replace secrets pasted in the prompt with a placeholder before sending.",
-      "default": false
     }
   }
 }
