@@ -108,3 +108,93 @@ export function warnLine(path: string, finding: MaskedFinding, wouldHold: boolea
   const tail = wouldHold ? ' · monitor mode: this would have been held' : ''
   return `LeakStop · ${finding.severity.toUpperCase()} · ${finding.label} in ${path}:${finding.line}${tail}`
 }
+
+// --- Bash and Read ------------------------------------------------------------
+
+const list = (items: readonly string[], max = 5): string => {
+  const shown = items.slice(0, max).join(', ')
+  return items.length > max ? `${shown} and ${items.length - max} more` : shown
+}
+
+/** What the model reads when a command with a literal secret is denied. */
+export function commandSecretDeny(findings: readonly MaskedFinding[]): string {
+  const what = findings.slice(0, 5).map((f) => `${typeOf(f)}${hint(f)}`).join(', ')
+  const name = findings[0] === undefined ? undefined : ENV_VARS[findings[0].ruleId]
+  const variable = name === undefined ? 'an environment variable' : `an environment variable (for example ${name})`
+  const use = name === undefined ? 'a variable' : `$${name}`
+  return `LeakStop blocked this command: it contains ${what}. Keep the value in ${variable}, defined in .env (ignored by git), and refer to it as ${use} instead of writing it out.`
+}
+
+export function commandSecretQuestion(findings: readonly MaskedFinding[]): string {
+  const severity = findings.some((f) => f.severity === 'critical') ? 'CRITICAL' : 'MEDIUM'
+  const lines = [`LeakStop · ${severity}`]
+  for (const finding of findings.slice(0, 3)) lines.push(`${finding.label} in the Bash command`, `  ${finding.masked}`)
+  if (findings.length > 3) lines.push(`  …and ${findings.length - 3} more`)
+  lines.push('Written out in a command, the secret stays in the session history.', '', 'How do you want to handle it?')
+  return lines.join('\n')
+}
+
+/** Printing sensitive files or the environment: the values would enter the conversation. */
+export function dumpQuestion(subject: string, items: readonly string[]): string {
+  return [
+    'LeakStop · CRITICAL',
+    subject,
+    `  ${list(items)}`,
+    "The values would enter the model's context and the session history.",
+    '',
+    'How do you want to handle it?',
+  ].join('\n')
+}
+
+export function fileReadDeny(files: readonly string[]): string {
+  return `LeakStop blocked this command: it would print ${list(files)} into the conversation, where the values would stay in the model's context and the session history. Do not read the file. To see which variables exist, read .env.example or ask the user.`
+}
+
+export const ENV_DUMP_DENY =
+  'LeakStop blocked this command: printing the whole environment would put secret values into the conversation. Ask for the specific variable you need, or list names only with: env | cut -d= -f1'
+
+export function secretVarDeny(names: readonly string[]): string {
+  return `LeakStop blocked this command: it would print the value of ${list(names)} into the conversation. Use the variable without printing it (for example by passing it to the program that needs it), or ask the user.`
+}
+
+export function gitAddQuestion(files: readonly string[]): string {
+  return [
+    'LeakStop · CRITICAL',
+    'git add would stage files that hold secrets and are not ignored by git',
+    `  ${list(files)}`,
+    'They would end up in the next commit.',
+    '',
+    'How do you want to handle it?',
+  ].join('\n')
+}
+
+export function gitAddDeny(files: readonly string[]): string {
+  return `LeakStop blocked git add: ${list(files)} hold secrets and are not ignored by git. Add them to .gitignore (and run git rm --cached on any that are already tracked), then retry. Stage specific files instead of -A or . while sensitive files are not ignored.`
+}
+
+/** A commit or push that would publish a secret. The fingerprint lets the user allow that one finding. */
+export function gitBlockMessage(operation: 'commit' | 'push', findings: readonly (MaskedFinding & { path: string })[]): string {
+  const what = findings.slice(0, 5).map((f) => `${typeOf(f)}${hint(f)} at ${f.path}:${f.line}`).join('; ')
+  const more = findings.length > 5 ? ` (and ${findings.length - 5} more)` : ''
+  const subject = operation === 'commit' ? 'the staged changes add' : 'the commits to be pushed add'
+  const fix =
+    operation === 'commit'
+      ? 'Unstage the file (git restore --staged <file>), read the value from an environment variable instead and commit again.'
+      : 'Remove the secret from those commits before pushing, read it from an environment variable instead, and rotate it if it was ever shared.'
+  const allow = findings.slice(0, 3).map((f) => f.fingerprint).join(' ')
+  return `LeakStop blocked this git ${operation}: ${subject} ${what}${more}. ${fix} If the user wants it anyway, they can run /leakstop allow ${allow}`
+}
+
+export function readQuestion(path: string): string {
+  return ['LeakStop · CRITICAL', 'Read of a sensitive file', `  ${path}`, "Its contents would enter the model's context and the session history.", '', 'How do you want to handle it?'].join('\n')
+}
+
+export function readDeny(path: string, isStrict: boolean): string {
+  const never = isStrict ? ' Strict mode never allows reading sensitive files.' : ''
+  return `LeakStop blocked reading ${path}: it holds secrets that would enter the conversation.${never} Do not read it; read .env.example for variable names or ask the user.`
+}
+
+/** The transcript line for something that warns instead of holding. */
+export function noticeLine(what: string, isMonitor: boolean): string {
+  return `LeakStop · ${what}${isMonitor ? ' · monitor mode: this would have been held' : ''}`
+}
