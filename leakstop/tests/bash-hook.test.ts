@@ -228,6 +228,100 @@ test('a sensitive read is held in strict mode too, and warns in monitor mode', {
   expect(env.commands).toEqual(['cat .env'])
 })
 
+// --- Recursive searches --------------------------------------------------------------
+
+const finds = (...files: string[]) => (argv: string[]) => (argv[0] === 'find' ? `${files.join('\n')}\n` : undefined)
+
+test('grep -r over a folder that holds sensitive files is held, and the message names them', async ($, on) => {
+  const env = toolsRun(on)
+  const asked = answerWith(on, CANCEL)
+  gitScript(on, finds('./.env', './apps/web/.env.local', './.env.example', './README.md', './keys/id_rsa.pub'))
+  const r = await bash($, 'grep -rn API_KEY .')
+  expect(isDenied(r)).toBe(true)
+  expect(r.deny.startsWith('LeakStop blocked this search: it would print lines from .env, apps/web/.env.local')).toBe(true)
+  expect(r.deny.includes('.env.example')).toBe(false)
+  expect(r.deny.includes('id_rsa.pub')).toBe(false)
+  expect(asked.options[0]).toEqual([ALLOW_ONCE, CANCEL])
+  expect(env.commands).toEqual([])
+})
+
+test('the search looks in the folders it was given, with a bounded find', async ($, on) => {
+  toolsRun(on)
+  answerWith(on, CANCEL)
+  const repo = gitScript(on, finds())
+  await bash($, 'grep -r KEY src config')
+  expect(repo.calls.map((c) => c.slice(0, 4))).toEqual([['find', 'src', '-maxdepth', '8'], ['find', 'config', '-maxdepth', '8']])
+  expect(repo.inits.every((init) => init?.timeoutMs === 5000)).toBe(true)
+})
+
+test('searches that find nothing sensitive, or cannot print lines, pass without asking', async ($, on) => {
+  const env = toolsRun(on)
+  const asked = answerWith(on, CANCEL)
+  const repo = gitScript(on, finds('./README.md', './.env.example', './src/a.ts'))
+  for (const command of ['grep -rn TODO src', 'grep -rl API_KEY .', 'rg KEY', 'rg -l --hidden KEY']) expect(ran(await bash($, command))).toBe(true)
+  expect(asked.questions.length).toBe(0)
+  expect(env.commands.length).toBe(4)
+  // Only the first one needed a look, and `rg KEY` never reads hidden files.
+  expect(repo.calls.filter((c) => c[0] === 'find').length).toBe(1)
+})
+
+test('excluding or limiting the search takes the sensitive files out of reach', async ($, on) => {
+  const env = toolsRun(on)
+  const asked = answerWith(on, CANCEL)
+  gitScript(on, finds('./.env', './.env.local', './certs/server.pem'))
+  for (const command of [
+    "grep -rn KEY --exclude='.env*' --exclude='*.pem' .",
+    "grep -rn KEY --exclude-dir=certs --exclude='.env*' .",
+    'grep -rn KEY --include=*.ts .',
+    "rg --hidden -g '!.env*' -g '!*.pem' KEY",
+  ]) {
+    expect(ran(await bash($, command))).toBe(true)
+  }
+  // A partial exclusion leaves something in reach.
+  expect(isDenied(await bash($, "grep -rn KEY --exclude='.env*' ."))).toBe(true)
+  expect(asked.questions.length).toBe(1)
+  expect(env.commands.length).toBe(4)
+})
+
+test('rg only reaches hidden or ignored files when told to', async ($, on) => {
+  toolsRun(on)
+  answerWith(on, CANCEL)
+  gitScript(on, finds('./.env'))
+  expect(isDenied(await bash($, 'rg --hidden KEY'))).toBe(true)
+  expect(isDenied(await bash($, 'rg -uu KEY src'))).toBe(true)
+  expect(ran(await bash($, 'rg KEY'))).toBe(true)
+})
+
+test('"Allow once" runs the search and is remembered', async ($, on) => {
+  const env = toolsRun(on)
+  const asked = answerWith(on, ALLOW_ONCE)
+  gitScript(on, finds('./.env'))
+  expect(ran(await bash($, 'grep -rn KEY .'))).toBe(true)
+  expect(ran(await bash($, 'grep -rn OTHER .'))).toBe(true)
+  expect(asked.questions.length).toBe(1)
+  expect(env.commands.length).toBe(2)
+})
+
+test('a folder that cannot be listed does not block the search', async ($, on) => {
+  const env = toolsRun(on)
+  answerWith(on, CANCEL)
+  gitScript(on, () => {
+    throw new Error('find: timed out')
+  })
+  expect(ran(await bash($, 'grep -rn KEY .'))).toBe(true)
+  expect(env.commands.length).toBe(1)
+})
+
+test('searches are held in strict mode and only warned about in monitor mode', { options: { mode: 'monitor' } }, async ($, on) => {
+  const env = toolsRun(on)
+  const asked = answerWith(on, CANCEL)
+  gitScript(on, finds('./.env'))
+  expect(ran(await bash($, 'grep -rn KEY .'))).toBe(true)
+  expect(asked.questions.length).toBe(0)
+  expect(env.logs.length).toBe(1)
+  expect(env.logs[0]?.includes('monitor mode')).toBe(true)
+})
+
 // --- git add -----------------------------------------------------------------
 
 const repoWith = (untracked: string[], modified: string[] = []) =>

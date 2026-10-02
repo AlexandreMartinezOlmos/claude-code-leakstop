@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A recursive `grep` or `rg` over a folder that holds sensitive files (`.env`, keys, credentials) is now held, since `grep` ignores `.gitignore` and would print their values. Excluding those files (`--exclude`, `-g '!…'`), limiting the search (`--include`) or listing only names (`-l`, `-c`) keeps it quiet.
+
 ## 0.1.0
 
 First release. Requires Claude Code 2.1.287 or later.

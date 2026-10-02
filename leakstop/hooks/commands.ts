@@ -220,6 +220,77 @@ function isSensitiveOperand(operand: string): boolean {
   return [operand.replace(/[*?]/g, ''), operand.replace(/[*?]/g, 'x'), operand.replace(/\*/g, '.x')].some((guess) => classifyPath(guess) !== undefined)
 }
 
+/** A recursive `grep` or `rg` that prints lines (not just file names or counts). */
+export type Search = {
+  /** Where it looks: the folders it was given, or `.` when it was given none. */
+  dirs: string[]
+  /** Patterns of files it is told to skip (`--exclude`, `--exclude-dir`, `-g '!…'`). */
+  excludes: string[]
+  /** Patterns of files it is limited to (`--include`, `-g`); empty when it looks at everything. */
+  includes: string[]
+}
+
+const SEARCHERS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag'])
+/** Flags whose value is the next word. */
+const VALUE_FLAGS = new Set(['-e', '-f', '-m', '-A', '-B', '-C', '-d', '-D', '-g', '-t', '-T', '-j', '-M', '-E', '--include', '--exclude', '--exclude-dir', '--exclude-from', '--file', '--regexp', '--max-count', '--glob', '--iglob', '--type', '--type-not', '--threads', '--max-depth', '--context', '--before-context', '--after-context', '--directories', '--devices'])
+/** `rg` and `ag` skip hidden and ignored files unless told otherwise. */
+const REACHES_HIDDEN = /^(?:--hidden|-\.|--no-ignore(?:-[a-z-]+)?|--unrestricted|-u+|-U)$/
+/** Flags that make the output file names or counts, never lines. */
+const LIST_ONLY_LONG = /^--(?:files-with-matches|files-without-match|count|count-matches|quiet|silent|files)$/
+
+type SearchParse = {
+  /** The patterns and paths, with every flag and flag value removed. */
+  paths: string[]
+  /** File names or counts only: nothing here can print a line of a file. */
+  isListOnly: boolean
+  /** Set when the search is recursive and can reach files nobody named. */
+  search?: Search
+}
+
+function parseSearch(name: string, args: readonly string[]): SearchParse {
+  const isGrep = name === 'grep' || name === 'egrep' || name === 'fgrep'
+  let isRecursive = !isGrep // rg and ag always are
+  let reachesHidden = isGrep // grep reads dotfiles and ignored files
+  let isPatternGiven = false
+  let isListOnly = false
+  const words: string[] = []
+  const excludes: string[] = []
+  const includes: string[] = []
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] as string
+    if (/^>>?\|?$/.test(arg)) {
+      i++ // the target of an output redirection
+      continue
+    }
+    if (arg === '<' || arg === '<<') continue
+    if (!isFlag(arg)) {
+      words.push(arg)
+      continue
+    }
+    const [flag, inline] = arg.startsWith('--') && arg.includes('=') ? [arg.slice(0, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)] : [arg, undefined]
+    const value = inline ?? (VALUE_FLAGS.has(flag) ? args[++i] : undefined)
+
+    if (LIST_ONLY_LONG.test(flag)) isListOnly = true
+    if (/^-[A-Za-z]*[lLcq][A-Za-z]*$/.test(flag) && !flag.startsWith('--') && !VALUE_FLAGS.has(flag)) isListOnly = true
+    if (flag === '--recursive' || flag === '--dereference-recursive') isRecursive = true
+    else if (isGrep && !flag.startsWith('--') && /^-[A-Za-z]*[rR][A-Za-z]*$/.test(flag) && !VALUE_FLAGS.has(flag)) isRecursive = true
+    if (isGrep && (flag === '-d' || flag === '--directories') && value === 'recurse') isRecursive = true
+    if (!isGrep && REACHES_HIDDEN.test(flag)) reachesHidden = true
+    if (flag === '-e' || flag === '-f' || flag === '--regexp' || flag === '--file') isPatternGiven = true
+
+    if (value !== undefined) {
+      if (flag === '--exclude' || flag === '--exclude-from') excludes.push(value)
+      else if (flag === '--exclude-dir') excludes.push(`**/${value}/**`)
+      else if (flag === '--include') includes.push(value)
+      else if (flag === '-g' || flag === '--glob' || flag === '--iglob') (value.startsWith('!') ? excludes : includes).push(value.replace(/^!/, ''))
+    }
+  }
+  const paths = isPatternGiven ? words : words.slice(1)
+  if (isListOnly || !isRecursive || !reachesHidden) return { paths, isListOnly }
+  return { paths, isListOnly, search: { dirs: paths.length > 0 ? paths : ['.'], excludes, includes } }
+}
+
 export type GitOp =
   | { kind: 'add'; isAll: boolean; paths: string[]; dir?: string }
   | { kind: 'commit'; isAll: boolean; dir?: string; staging: { isAll: boolean; paths: string[] }[] }
@@ -237,6 +308,8 @@ export type CommandFacts = {
   touchesConfig: boolean
   /** The command that prints names only instead, when the command is simple enough to rewrite. */
   namesOnly?: string
+  /** Recursive searches that print matching lines and may reach files nobody named. */
+  searches: Search[]
   /**
    * Where the command writes, when it does nothing but write: one `echo`, `printf` or `cat`
    * redirected to files, with no pipe, no `&&` and no command substitution. A secret in
@@ -323,10 +396,19 @@ function gitOps(segments: readonly Segment[]): GitOp[] {
   return ops
 }
 
+const dedupe = <T>(items: readonly T[]): T[] => {
+  const seen = new Set<string>()
+  return items.filter((item) => {
+    const key = JSON.stringify(item)
+    return seen.has(key) ? false : (seen.add(key), true)
+  })
+}
+
 function analyzeSegments(command: string, segments: readonly Segment[], depth: number): CommandFacts {
   const readFiles: string[] = []
   const secretVars: string[] = []
   let isEnvDump = false
+  const searches: Search[] = []
 
   for (const segment of segments) {
     const { name, args, isBareEnv } = programOf(segment.words)
@@ -346,6 +428,16 @@ function analyzeSegments(command: string, segments: readonly Segment[], depth: n
       for (const match of segment.words.join(' ').matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g)) {
         if (match[1] !== undefined && isSecretName(match[1])) secretVars.push(match[1])
       }
+    } else if (SEARCHERS.has(name)) {
+      const parsed = parseSearch(name, args)
+      if (parsed.search !== undefined) searches.push(parsed.search)
+      // A search that names a sensitive file is a plain read of it, unless it only lists names or counts.
+      if (!parsed.isListOnly) {
+        for (const file of parsed.paths) {
+          if (/^\/proc\/[^/]+\/environ$/.test(file)) isEnvDump = true
+          else if (isSensitiveOperand(file)) readFiles.push(file)
+        }
+      }
     } else if (VIEWERS.has(name)) {
       for (const file of operands(args)) {
         if (/^\/proc\/[^/]+\/environ$/.test(file)) isEnvDump = true
@@ -363,12 +455,13 @@ function analyzeSegments(command: string, segments: readonly Segment[], depth: n
       readFiles.push(...facts.readFiles)
       secretVars.push(...facts.secretVars)
       isEnvDump ||= facts.isEnvDump
+      searches.push(...facts.searches)
       git = [...git, ...facts.git]
       touches ||= facts.touchesConfig
     }
   }
 
-  return { readFiles: [...new Set(readFiles)], isEnvDump, secretVars: [...new Set(secretVars)], git, touchesConfig: touches, namesOnly: namesOnlyFor(segments, readFiles, isEnvDump) }
+  return { readFiles: [...new Set(readFiles)], isEnvDump, secretVars: [...new Set(secretVars)], searches: dedupe(searches), git, touchesConfig: touches, namesOnly: namesOnlyFor(segments, readFiles, isEnvDump) }
 }
 
 /** The replacement that lists names only, for a command that is one plain view of env files or the bare environment. */

@@ -198,3 +198,12 @@ export function readDeny(path: string, isStrict: boolean): string {
 export function noticeLine(what: string, isMonitor: boolean): string {
   return `LeakStop · ${what}${isMonitor ? ' · monitor mode: this would have been held' : ''}`
 }
+
+/** A recursive search that would print lines of sensitive files nobody named. */
+export function searchQuestion(files: readonly string[]): string {
+  return dumpQuestion('This search would print lines from files that hold secrets', files)
+}
+
+export function searchDeny(files: readonly string[]): string {
+  return `LeakStop blocked this search: it would print lines from ${list(files)}, which hold secrets, into the conversation. Search specific folders such as src/ instead, or exclude those files (for example grep -r --exclude='.env*' …, or rg -g '!.env*'). To list only the files that match, use grep -rl or rg -l.`
+}

@@ -128,3 +128,42 @@ test('knows when a command only writes to files', () => {
     expect(targets(command)).toBe(undefined)
   }
 })
+
+test('finds recursive searches that print lines', () => {
+  const searches = (c: string) => facts(c).searches
+  const plain = { dirs: ['.'], excludes: [], includes: [] }
+  expect(searches('grep -rn API_KEY .')).toEqual([plain])
+  expect(searches('grep -R KEY')).toEqual([plain])
+  expect(searches('grep -r --recursive KEY')).toEqual([plain])
+  expect(searches('grep -r KEY src config')).toEqual([{ dirs: ['src', 'config'], excludes: [], includes: [] }])
+  expect(searches('grep -e KEY -r src')).toEqual([{ dirs: ['src'], excludes: [], includes: [] }])
+  expect(searches('grep -rn -A 3 KEY .')).toEqual([plain])
+  expect(searches('grep -d recurse KEY .')).toEqual([plain])
+  expect(searches('rg --hidden KEY')).toEqual([plain])
+  expect(searches('rg -uu KEY src')).toEqual([{ dirs: ['src'], excludes: [], includes: [] }])
+  expect(searches('rg --no-ignore --hidden KEY')).toEqual([plain])
+  expect(searches('echo $(grep -r KEY .)')).toEqual([plain])
+  expect(searches('cd app && grep -r KEY .')).toEqual([plain])
+})
+
+test('reads include and exclude patterns of a search', () => {
+  expect(facts("grep -r --exclude='.env*' --exclude-dir=node_modules KEY .").searches).toEqual([{ dirs: ['.'], excludes: ['.env*', '**/node_modules/**'], includes: [] }])
+  expect(facts('grep -r --include=*.ts --include *.tsx KEY src').searches[0]?.includes).toEqual(['*.ts', '*.tsx'])
+  expect(facts("rg --hidden -g '!.env*' -g '*.ts' KEY").searches).toEqual([{ dirs: ['.'], excludes: ['.env*'], includes: ['*.ts'] }])
+})
+
+test('searches that cannot print a line from a sensitive file are not searches', () => {
+  for (const command of ['grep -rl KEY .', 'grep -rc KEY .', 'grep -r -l KEY .', 'grep -rL KEY .', 'grep -rq KEY .', 'grep --files-with-matches -r KEY .', 'grep KEY notes.txt', 'grep -n KEY src/a.ts', 'rg KEY', 'rg KEY src', 'rg -l --hidden KEY', 'rg --files-with-matches --hidden KEY', 'rg --count -uu KEY', 'ag KEY']) {
+    expect(facts(command).searches).toEqual([])
+  }
+})
+
+test('a search that names a sensitive file is still a plain read of it', () => {
+  expect(facts('grep -rn API_KEY .env').readFiles).toEqual(['.env'])
+  expect(facts('rg KEY .env.local').readFiles).toEqual(['.env.local'])
+  expect(facts('grep KEY /proc/self/environ').isEnvDump).toBe(true)
+  // Only names or counts: nothing to print.
+  for (const command of ['grep -l KEY .env', 'grep -c KEY .env', 'rg --files-with-matches KEY .env']) expect(facts(command).readFiles).toEqual([])
+  // A glob given to rg is not a file it reads.
+  expect(facts("rg --hidden -g '!.env*' KEY src").readFiles).toEqual([])
+})
