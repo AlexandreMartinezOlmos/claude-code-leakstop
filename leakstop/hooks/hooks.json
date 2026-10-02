@@ -1,0 +1,6 @@
+{
+  "description": "LeakStop hooks module",
+  "modules": [
+    "./leakstop.tsx"
+  ]
+}

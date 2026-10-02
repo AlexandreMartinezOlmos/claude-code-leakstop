@@ -1,0 +1,26 @@
+{
+  "name": "leakstop",
+  "version": "0.1.0",
+  "description": "Stops secrets from leaking before they are written, printed or committed to git.",
+  "author": {
+    "name": "AlexandreMartinezOlmos",
+    "url": "https://github.com/AlexandreMartinezOlmos"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/AlexandreMartinezOlmos/claude-code-leakstop",
+  "repository": "https://github.com/AlexandreMartinezOlmos/claude-code-leakstop",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "mode": {
+      "type": "string",
+      "title": "Protection mode",
+      "description": "monitor only warns and logs; standard holds critical findings; strict also holds medium findings and blocks reads of sensitive files.",
+      "options": [
+        "monitor",
+        "standard",
+        "strict"
+      ],
+      "default": "standard"
+    }
+  }
+}
