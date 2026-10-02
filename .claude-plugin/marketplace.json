@@ -1,6 +1,9 @@
 {
   "name": "leakstop",
-  "owner": { "name": "Alex" },
+  "owner": {
+    "name": "AlexandreMartinezOlmos",
+    "url": "https://github.com/AlexandreMartinezOlmos"
+  },
   "description": "LeakStop: a Claude Code mod that stops secrets from leaking.",
   "plugins": [
     {
@@ -8,7 +11,11 @@
       "source": "./leakstop",
       "description": "Stops secrets from leaking before they are written, printed or committed to git.",
       "category": "security",
-      "tags": ["security", "secrets", "mod"]
+      "tags": [
+        "security",
+        "secrets",
+        "mod"
+      ]
     }
   ]
 }

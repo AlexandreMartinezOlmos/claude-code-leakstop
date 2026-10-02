@@ -237,6 +237,12 @@ export type CommandFacts = {
   touchesConfig: boolean
   /** The command that prints names only instead, when the command is simple enough to rewrite. */
   namesOnly?: string
+  /**
+   * Where the command writes, when it does nothing but write: one `echo`, `printf` or `cat`
+   * redirected to files, with no pipe, no `&&` and no command substitution. A secret in
+   * such a command goes to those files and nowhere else.
+   */
+  writeTargets?: string[]
 }
 
 /**
@@ -379,6 +385,23 @@ function namesOnlyFor(segments: readonly Segment[], readFiles: readonly string[]
   return undefined
 }
 
+const WRITERS = new Set(['echo', 'printf', 'cat'])
+
+/** The files a command only writes to, or `undefined` when it does anything else as well. */
+function writeTargetsOf(command: string, segments: readonly Segment[]): string[] | undefined {
+  if (segments.length !== 1 || substitutions(command).length > 0) return undefined
+  const { name, args } = programOf((segments[0] as Segment).words)
+  if (!WRITERS.has(name)) return undefined
+  const targets: string[] = []
+  for (let i = 0; i < args.length; i++) {
+    if (/^>>?\|?$/.test(args[i] as string) && args[i + 1] !== undefined) targets.push(args[++i] as string)
+  }
+  return targets.length > 0 ? targets : undefined
+}
+
 export function analyzeCommand(command: string): CommandFacts {
-  return analyzeSegments(command, parseCommand(command), 0)
+  const segments = parseCommand(command)
+  const facts = analyzeSegments(command, segments, 0)
+  const writeTargets = writeTargetsOf(command, segments)
+  return writeTargets === undefined ? facts : { ...facts, writeTargets }
 }
