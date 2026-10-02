@@ -287,14 +287,20 @@ const isInScope = (file: string, paths: readonly string[]): boolean => paths.som
 // --- Bash checks -------------------------------------------------------------
 
 /** A literal secret inside the command: a `curl` header, an `export`, a `--build-arg`, a heredoc. */
-async function checkSecrets($: EngineInterface, command: string, mode: Mode, allowed: ReadonlySet<string>, config: StoredConfig): Promise<Verdict> {
+async function checkSecrets($: EngineInterface, command: string, mode: Mode, allowed: ReadonlySet<string>, config: StoredConfig, writeTargets?: readonly string[]): Promise<Verdict> {
   const scan = scanText(command, { extraRules: customRules(config) })
   if (scan.isPartial) $.ui.log('LeakStop: the custom rules were too slow and did not cover the whole command')
   const found = scan.findings
   if (found.length === 0) return undefined
   const masked = (await Promise.all(found.map(describe))).filter((f) => !allowed.has(f.fingerprint))
   if (masked.length === 0) return undefined
-  const action = decideAll('command', masked.map((f) => f.severity), mode)
+  // `cat > .env <<EOF … EOF` or `echo KEY=… >> .env` into files git ignores is where a secret belongs.
+  let destination: Destination = 'command'
+  if (writeTargets !== undefined) {
+    const ignored = await Promise.all(writeTargets.map((target) => isIgnored($, target)))
+    if (ignored.every(Boolean)) destination = 'ignored-file'
+  }
+  const action = decideAll(destination, masked.map((f) => f.severity), mode)
   return settle($, {
     action,
     tool: 'Bash',
@@ -662,7 +668,7 @@ export const register: Register = (on, options) => {
     const allowed = await allowedFingerprints($, config)
     let command = e.command
 
-    const secrets = await checkSecrets($, e.command, mode, allowed, config)
+    const secrets = await checkSecrets($, e.command, mode, allowed, config, facts.writeTargets)
     if (secrets !== undefined && 'deny' in secrets) return secrets
 
     const sensitive = await checkSensitive($, facts, mode, allowed)
