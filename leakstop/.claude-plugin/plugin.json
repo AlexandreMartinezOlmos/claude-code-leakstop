@@ -5,5 +5,20 @@
   "author": { "name": "Alex" },
   "license": "MIT",
   "homepage": "https://github.com/AlexandreMartinezOlmos/claude-code-leakstop",
-  "repository": "https://github.com/AlexandreMartinezOlmos/claude-code-leakstop"
+  "repository": "https://github.com/AlexandreMartinezOlmos/claude-code-leakstop",
+  "userConfig": {
+    "mode": {
+      "type": "string",
+      "title": "Protection mode",
+      "description": "monitor only warns and logs; standard holds critical findings; strict also holds medium findings and blocks reads of sensitive files.",
+      "options": ["monitor", "standard", "strict"],
+      "default": "standard"
+    },
+    "redactPrompt": {
+      "type": "boolean",
+      "title": "Redact pasted secrets",
+      "description": "Replace secrets pasted in the prompt with a placeholder before sending.",
+      "default": false
+    }
+  }
 }
