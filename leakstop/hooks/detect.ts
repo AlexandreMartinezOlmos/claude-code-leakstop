@@ -70,7 +70,7 @@ const baseName = (path: string): string => path.split(/[\\/]/).pop()?.toLowerCas
 
 const ENV_SAFE_SUFFIX = /\.(?:example|sample|template|dist|defaults)$/
 
-/** The sensitive-file rules of the spec, by path alone. `undefined`: not sensitive. */
+/** The sensitive-file rules, by path alone. `undefined`: not sensitive. */
 export function classifyPath(path: string): PathClass | undefined {
   const name = baseName(path)
   if (name === '') return undefined
