@@ -88,7 +88,7 @@ export type GitScript = {
 }
 
 /**
- * Stands in for every `git` the plugin runs. `reply` gets the arguments after
+ * Stands in for every program the plugin runs (`git`, and `find` for recursive searches). `reply` gets the arguments after
  * `git` and answers with stdout (or an exit code); unscripted calls succeed with
  * no output.
  */
@@ -96,7 +96,8 @@ export function gitScript(on: any, first: (argv: string[], init?: any) => GitRep
   let reply = first
   const script: GitScript = { calls: [], inits: [], use: (next) => void (reply = next) }
   on('process.run', (_$: any, e: any) => {
-    const argv = e.argv.slice(1) as string[]
+    // `git` calls get the arguments after `git`; any other program gets its whole argv.
+    const argv = (e.argv[0] === 'git' ? e.argv.slice(1) : e.argv) as string[]
     script.calls.push(argv)
     script.inits.push(e.init)
     const r = reply(argv, e.init)
