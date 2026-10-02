@@ -42,6 +42,8 @@ export type Watch = {
   allowOnce: () => string[]
   /** Lines LeakStop sent to the transcript with `$.ui.log`. */
   logs: string[]
+  /** The Bash commands that actually ran, after any rewrite. */
+  commands: string[]
 }
 
 /**
@@ -53,6 +55,7 @@ export type Watch = {
 export function toolsRun(on: any): Watch {
   const written: Record<string, any> = {}
   const logs: string[] = []
+  const commands: string[] = []
   on('clock.now', () => ({ value: 1_700_000_000_000 }))
   on('session.cwd', () => ({ value: CWD }))
   on('ui.log', (_$: any, e: any) => {
@@ -63,9 +66,65 @@ export function toolsRun(on: any): Watch {
     written[e.key] = e.value
     return next(e)
   })
-  on('tool.call', { tool: ['Write', 'Edit', 'NotebookEdit'] }, () => ({ result: 'ok' }))
-  return { findings: () => written.findings ?? [], allowOnce: () => written.allowOnce ?? [], logs }
+  on('tool.call', { tool: ['Write', 'Edit', 'NotebookEdit', 'Bash', 'Read'] }, (_$: any, e: any) => {
+    if (e.tool === 'Bash') commands.push(e.command)
+    return { result: 'ok' }
+  })
+  return { findings: () => written.findings ?? [], allowOnce: () => written.allowOnce ?? [], logs, commands }
 }
 
 export const isDenied = (r: any): boolean => typeof r?.deny === 'string'
 export const ran = (r: any): boolean => r?.result === 'ok'
+
+export type GitReply = string | { exitCode?: number; stdout?: string; isTruncated?: boolean } | undefined
+
+export type GitScript = {
+  /** The arguments (after `git`) of every call, and the options each was run with. */
+  calls: string[][]
+  inits: any[]
+  /** Replaces the script: hooks cannot be registered once a test has called `$`. */
+  use: (reply: (argv: string[], init?: any) => GitReply) => void
+}
+
+/**
+ * Stands in for every `git` the plugin runs. `reply` gets the arguments after
+ * `git` and answers with stdout (or an exit code); unscripted calls succeed with
+ * no output.
+ */
+export function gitScript(on: any, first: (argv: string[], init?: any) => GitReply): GitScript {
+  let reply = first
+  const script: GitScript = { calls: [], inits: [], use: (next) => void (reply = next) }
+  on('process.run', (_$: any, e: any) => {
+    const argv = e.argv.slice(1) as string[]
+    script.calls.push(argv)
+    script.inits.push(e.init)
+    const r = reply(argv, e.init)
+    const out = typeof r === 'string' ? { stdout: r } : (r ?? {})
+    return { value: { exitCode: out.exitCode ?? 0, stdout: out.stdout ?? '', stderr: '', isStdoutTruncated: out.isTruncated ?? false, isStderrTruncated: false } }
+  })
+  return script
+}
+
+/**
+ * Files on disk, by path relative to the working directory (the engine resolves
+ * paths before the event); any other path cannot be read.
+ */
+export function disk(on: any, files: Record<string, string>): void {
+  on('fs.read', (_$: any, e: any) => {
+    const key = Object.keys(files)
+      .filter((k) => e.path === k || e.path.endsWith(`/${k}`))
+      .sort((a, b) => b.length - a.length)[0]
+    if (key === undefined) throw new Error('ENOENT')
+    return { value: files[key] }
+  })
+}
+
+/** Fingerprints the user allowed for good, as `/leakstop allow` will store them. */
+export function storeAllows(on: any, fingerprints: string[]): void {
+  on('store.get', (_$: any, e: any) => ({ value: e.key === 'allowFingerprints' ? fingerprints : undefined }))
+}
+
+/** A unified diff that adds `lines` to `path`, the first at line `from`. */
+export function diffAdding(path: string, from: number, lines: string[]): string {
+  return [`diff --git a/${path} b/${path}`, `--- a/${path}`, `+++ b/${path}`, `@@ -0,0 +${from},${lines.length} @@`, ...lines.map((l) => `+${l}`)].join('\n') + '\n'
+}
