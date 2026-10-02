@@ -27,6 +27,8 @@ declare module 'claude-code' {
       allowOnce: string[]
       /** Set by `/leakstop pause`. */
       paused: boolean
+      /** Warnings the user has not seen yet; cleared by the next prompt or by `/leakstop`. */
+      banner: StoredFinding[]
     }
   }
 }
