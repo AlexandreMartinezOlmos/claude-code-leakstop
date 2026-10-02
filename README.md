@@ -41,7 +41,7 @@ Most of the time you do nothing: LeakStop stays quiet until something looks dang
 
 | What happens | When | What you see |
 | --- | --- | --- |
-| **Pass** | Nothing sensitive, or the secret is going somewhere safe (for example a `.env` that git ignores) | Nothing |
+| **Pass** | Nothing sensitive, or the secret is going somewhere safe (for example a `.env` that git ignores, even when Claude writes it with `cat > .env <<EOF`) | Nothing |
 | **Warn** | A weaker signal, like a JWT or a `password = "…"` that might be a test fixture | A line above the prompt, until your next message |
 | **Hold** | A real secret is about to be written, or a sensitive file or the whole environment is about to be printed | A question with numbered options. Anything other than "Allow once" (including closing the dialog) means **no** |
 | **Block** | A `git commit` or `git push` that would publish a secret | Denied straight away, with the reason sent to Claude |
