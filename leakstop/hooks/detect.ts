@@ -111,17 +111,23 @@ const LOCKFILES = new Set([
 
 // --- Allowlist and false-positive exclusions -------------------------------
 
-const PLACEHOLDER_WORDS = /example|placeholder|changeme|change[-_ ]?me|dummy|sample|redacted|todo|fixme|insert|replace|(?:^|[-_])(?:your|my)[-_]|<[^>]*>|\$\{[^}]*\}|\{\{[^}]*\}\}|^\$[A-Za-z_]|^%\(/i
-const PLACEHOLDER_RUNS = /x{4,}|\*{4,}|•{3,}|\.{3,}|0{8,}|#{4,}/i
+/** Long words and shapes that a real credential never contains by chance. */
+const STRONG_PLACEHOLDER = /example|placeholder|changeme|change[-_ ]?me|dummy|sample|redacted|insert|replace|(?:^|[-_])your[-_]|<[^>]*>|\$\{[^}]*\}|\{\{[^}]*\}\}|^\$[A-Za-z_]|^%\(/i
+/** Short fragments that a random key can contain by chance (`-my_`, `xxxx`): they only count in a low-entropy value. */
+const WEAK_PLACEHOLDER = /(?:^|[-_])my[-_]|todo|fixme|x{4,}|\*{4,}|•{3,}|\.{3,}|0{8,}|#{4,}/i
+/** A random 20+ character key is above this; `your-key-here` and `xxxxxxxx` are well below. */
+const RANDOM_ENTROPY = 4.2
 const WEAK_PASSWORDS = new Set(['password', 'passwd', 'pass', 'pwd', 'secret', 'admin', 'root', 'test', 'user', 'guest', 'postgres', 'mysql', 'redis'])
 
 /**
  * Placeholders and documentation examples: `your-api-key`, `changeme`,
  * `<TOKEN>`, `xxxx…`, AWS's `…EXAMPLE` keys and anything that is a reference
- * to a variable instead of a value.
+ * to a variable instead of a value. A high-entropy value is never called a
+ * placeholder because of a short fragment: that would let a real key through.
  */
 export function isPlaceholder(value: string): boolean {
-  if (PLACEHOLDER_WORDS.test(value) || PLACEHOLDER_RUNS.test(value)) return true
+  if (STRONG_PLACEHOLDER.test(value)) return true
+  if (WEAK_PLACEHOLDER.test(value) && entropy(value) < RANDOM_ENTROPY) return true
   if (WEAK_PASSWORDS.has(value.toLowerCase())) return true
   // One repeated character, with or without a known prefix.
   return /^(.)\1+$/.test(value.replace(/^[A-Za-z]{1,6}[-_]/, ''))
