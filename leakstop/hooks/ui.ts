@@ -69,9 +69,10 @@ export function historyRows(findings: readonly StoredFinding[], width: number): 
 const MAX_TEXT_ROWS = 15
 
 /** The same history as plain text, for where no panel can be drawn. */
-export function summaryText(findings: readonly StoredFinding[], paused: boolean): string {
+export function summaryText(findings: readonly StoredFinding[], paused: boolean, warnings: readonly string[] = []): string {
   const state = paused ? ' · PAUSED (nothing is being checked)' : ''
-  if (findings.length === 0) return `LeakStop · no findings this session${state}`
+  const notes = warnings.slice(0, 5).map((warning) => `.leakstop.json: ${warning}`)
+  if (findings.length === 0) return [`LeakStop · no findings this session${state}`, ...notes].join('\n')
   const rows = historyRows(findings, 200).slice(0, MAX_TEXT_ROWS)
   const lines = rows.map((row) => `${row.head} ${row.detail.trim()}`)
   const hidden = findings.length - rows.length
@@ -79,6 +80,7 @@ export function summaryText(findings: readonly StoredFinding[], paused: boolean)
     `LeakStop · ${findings.length} finding${findings.length === 1 ? '' : 's'} this session${state}`,
     ...lines,
     ...(hidden > 0 ? [`…and ${hidden} older`] : []),
+    ...notes,
     'Allow one for good with /leakstop allow <number or sha256:…>',
   ].join('\n')
 }
