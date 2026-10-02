@@ -81,7 +81,19 @@ Placeholders (`your-api-key`, `changeme`, `<TOKEN>`), Amazon's documentation exa
 | `strict` | Also holds weaker signals, and **blocks** reading sensitive files outright | Repos with customer or production data |
 | `monitor` | Never holds or blocks, only warns and logs | Trying LeakStop on a new repo to see what it would flag |
 
-Change it from `/config` (look for **Protection mode** under LeakStop), or in your Claude Code settings file:
+Change it from inside Claude Code with:
+
+```
+/plugin configure leakstop@leakstop
+```
+
+or from your terminal, for example to switch to strict mode:
+
+```
+claude plugin install leakstop@leakstop --config mode=strict
+```
+
+Either way it is saved in your Claude Code settings file:
 
 ```json
 {
@@ -90,6 +102,8 @@ Change it from `/config` (look for **Protection mode** under LeakStop), or in yo
   }
 }
 ```
+
+After installing you may see a note that "1 userConfig option is not yet set". That is fine: until you choose, LeakStop runs in `standard` mode.
 
 The mode lives in *your* settings on purpose: a repository you clone cannot lower your protection.
 
