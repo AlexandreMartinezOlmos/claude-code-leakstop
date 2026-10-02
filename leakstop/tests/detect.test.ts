@@ -55,7 +55,7 @@ test('detects a hard-coded credential as medium, quoted or bare', () => {
     `password = "${random(24)}"`,
     `API_KEY: '${random(32)}'`,
     `{ "client_secret": "${random(40, URLSAFE)}" }`,
-    `AUTH_TOKEN=${random(32)}`,
+    `AUTH_TOKEN=${random(30)}7a` // a bare value needs a digit, which keeps identifiers out,
   ]) {
     const { findings } = scanText(text)
     expect(findings.length).toBe(1)
@@ -81,6 +81,21 @@ test('placeholders pass', () => {
     'access_token = "••••••••••••••••••••"',
   ]) {
     expect(ids(text)).toEqual([])
+  }
+})
+
+test('a real-looking key is never dismissed as a placeholder for a short fragment', () => {
+  // Fragments a random URL-safe key contains by chance: `-my_`, `xxxx`, `todo`, `0000000000`.
+  const cases = [
+    `sk-proj-${random(10, URLSAFE)}-my_${random(36, URLSAFE)}`,
+    `AIza${random(10, URLSAFE)}xxxX${random(21, URLSAFE)}`,
+    `sk-ant-api03-${random(12, URLSAFE)}todo${random(30, URLSAFE)}`,
+    `ghp_${random(20)}0000000000${random(20)}`,
+  ]
+  for (const key of cases) expect(scanText(`k = "${key}"`).findings.length).toBe(1)
+  // Real placeholders have the same fragments and little entropy.
+  for (const placeholder of [`sk-ant-${'x'.repeat(24)}`, `sk-proj-my_key_goes_here_abcd`, `ghp_${'0'.repeat(37)}`]) {
+    expect(scanText(`k = "${placeholder}"`).findings).toEqual([])
   }
 })
 

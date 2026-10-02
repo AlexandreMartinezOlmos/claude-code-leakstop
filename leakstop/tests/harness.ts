@@ -52,12 +52,13 @@ export type Watch = {
  * LeakStop lets a call through). Returns a view of what LeakStop wrote to its
  * state, since a test's `$` has no `state` noun: the writes are watched on their way.
  */
-export function toolsRun(on: any): Watch {
+export function toolsRun(on: any, options: { surfaces?: string[] } = {}): Watch {
   const written: Record<string, any> = {}
   const logs: string[] = []
   const commands: string[] = []
   on('clock.now', () => ({ value: 1_700_000_000_000 }))
   on('session.cwd', () => ({ value: CWD }))
+  on('session.surfaces', () => ({ value: options.surfaces ?? [] }))
   on('ui.log', (_$: any, e: any) => {
     logs.push(e.text)
     return { value: undefined }
@@ -128,3 +129,44 @@ export function storeAllows(on: any, fingerprints: string[]): void {
 export function diffAdding(path: string, from: number, lines: string[]): string {
   return [`diff --git a/${path} b/${path}`, `--- a/${path}`, `+++ b/${path}`, `@@ -0,0 +${from},${lines.length} @@`, ...lines.map((l) => `+${l}`)].join('\n') + '\n'
 }
+
+export type UiCalls = {
+  /** What `$.ui.open` was asked, and what `$.command.register` registered. */
+  opened: any[]
+  closed: any[]
+  registered: any[]
+}
+
+/** The UI the engine would provide: panes (placed or not) and command registration. */
+export function uiEngine(on: any, options: { isPlaced?: boolean } = {}): UiCalls {
+  const calls: UiCalls = { opened: [], closed: [], registered: [] }
+  on('ui.open', (_$: any, e: any) => {
+    calls.opened.push(e)
+    return { value: options.isPlaced === false ? { isPlaced: false, reason: 'the terminal is too narrow' } : { isPlaced: true } }
+  })
+  on('ui.close', (_$: any, e: any) => {
+    calls.closed.push(e)
+    return { value: undefined }
+  })
+  on('command.register', (_$: any, e: any) => {
+    calls.registered.push(e)
+    return { value: { command: e.name } }
+  })
+  return calls
+}
+
+/** The machine-wide store, in memory. Returns the data, to assert on what was kept. */
+export function storeKV(on: any, initial: Record<string, unknown> = {}): Record<string, unknown> {
+  const data: Record<string, unknown> = { ...initial }
+  on('store.get', (_$: any, e: any) => ({ value: data[e.key] }))
+  on('store.set', (_$: any, e: any) => {
+    data[e.key] = e.value
+    return { value: undefined }
+  })
+  return data
+}
+
+export const USER = { kind: 'composer' } as const
+
+export const BAND_PROPS = { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 80, scroll: { bodyRows: 10 } as any, view: {} as any }
+export const PANE_PROPS = { title: 'LeakStop', isFocused: true, bodyColumns: 60, placement: 'dock' as const, scroll: { bodyRows: 20 } as any, view: {} as any }

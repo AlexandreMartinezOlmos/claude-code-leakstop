@@ -25,6 +25,7 @@ import * as say from './messages.ts'
 import type { WriteTool } from './messages.ts'
 import { decide, decideAll } from './policy.ts'
 import type { Action, Destination, Mode } from './policy.ts'
+import { USAGE, bannerLine, fit, historyRows, parseArgs, resolveIds, summaryText } from './ui.ts'
 
 const USE_ENV = 'Use environment variable'
 const ALLOW_ONCE = 'Allow once'
@@ -40,6 +41,11 @@ const GIT_TIMEOUT_MS = 20000
 const findingsRef = { plugin: 'leakstop', key: 'findings' } as const
 const allowOnceRef = { plugin: 'leakstop', key: 'allowOnce' } as const
 const pausedRef = { plugin: 'leakstop', key: 'paused' } as const
+const bannerRef = { plugin: 'leakstop', key: 'banner' } as const
+
+const PANE = 'leakstop'
+const MAX_BANNER = 5
+const MAX_ALLOWED_FOREVER = 1000
 
 /** What is kept about a finding or a sensitive operation: never a value. */
 type Note = Pick<MaskedFinding, 'fingerprint' | 'ruleId' | 'label' | 'severity' | 'line'> & { path?: string }
@@ -98,6 +104,36 @@ async function record($: EngineInterface, tool: string, path: string, notes: rea
   }))
   const { value = [] } = await $.state.get(findingsRef)
   await $.state.set(findingsRef, [...value, ...entries].slice(-MAX_FINDINGS))
+  if (decision === 'warned') {
+    const { value: banner = [] } = await $.state.get(bannerRef)
+    await $.state.set(bannerRef, [...banner, ...entries].slice(-MAX_BANNER))
+  }
+}
+
+/** True where a banner can be drawn: the terminal and the desktop app. The VS Code panel and `claude -p` draw nothing. */
+async function drawsBanner($: EngineInterface): Promise<boolean> {
+  try {
+    const surfaces = await $.session.surfaces()
+    return surfaces.some((surface) => surface === 'terminal' || surface === 'desktop')
+  } catch {
+    return false
+  }
+}
+
+async function clearBanner($: EngineInterface): Promise<void> {
+  const { value = [] } = await $.state.get(bannerRef)
+  if (value.length > 0) await $.state.set(bannerRef, [])
+}
+
+async function setPaused($: EngineInterface, paused: boolean): Promise<void> {
+  await $.state.set(pausedRef, paused)
+}
+
+/** Allows findings for good: the store is shared by every session on the machine. */
+async function allowForever($: EngineInterface, fingerprints: readonly string[]): Promise<void> {
+  const stored = await $.store.get('allowFingerprints')
+  const current = Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : []
+  await $.store.set('allowFingerprints', [...new Set([...current, ...fingerprints])].slice(-MAX_ALLOWED_FOREVER))
 }
 
 async function rememberAllowOnce($: EngineInterface, fingerprints: readonly string[]): Promise<void> {
@@ -148,7 +184,8 @@ async function settle($: EngineInterface, spec: Spec): Promise<Verdict> {
       await record($, spec.tool, spec.path, spec.notes, 'passed')
       return undefined
     case 'warn':
-      for (const line of spec.warn) $.ui.log(line)
+      // Where a banner is drawn it says it; where nothing is drawn, the transcript does.
+      if (!(await drawsBanner($))) for (const line of spec.warn) $.ui.log(line)
       await record($, spec.tool, spec.path, spec.notes, 'warned')
       return undefined
     case 'hold': {
@@ -432,6 +469,93 @@ function onFailure(mode: Mode, next: Failure): { deny: string } | undefined {
 
 export const register: Register = (on, options) => {
   const mode: Mode = options.mode === 'monitor' || options.mode === 'strict' ? options.mode : 'standard'
+
+  on('session.start', async ($, e, next) => {
+    await $.command.register({ name: 'leakstop', description: 'Show LeakStop findings, pause or resume protection, or allow a finding' })
+    return next(e)
+  })
+
+  // A warning stays above the prompt until the user's next message.
+  on('prompt.submit', async ($, e, next) => {
+    await clearBanner($)
+    return next(e)
+  })
+
+  on('command.run', { command: 'leakstop' }, async ($, e) => {
+    const args = parseArgs(e.args)
+    const { value: findings = [] } = await $.state.get(findingsRef)
+    const { value: paused = false } = await $.state.get(pausedRef)
+
+    if (args.kind === 'open') {
+      await clearBanner($)
+      let isPlaced = false
+      try {
+        isPlaced = (await $.ui.open({ id: PANE, title: 'LeakStop', focus: true })).isPlaced
+      } catch {
+        isPlaced = false
+      }
+      return isPlaced ? { text: '' } : { text: summaryText(findings, paused) }
+    }
+    if (args.kind === 'usage') return { text: USAGE }
+
+    // Changing what LeakStop checks is the user's call. A command that did not
+    // come from the person (a task, a peer session, another plugin) is refused.
+    if (e.origin?.kind !== 'composer' && e.origin?.kind !== 'bridge') {
+      return { text: `LeakStop: /leakstop ${args.kind} only works when you type it yourself.` }
+    }
+    if (args.kind === 'pause') {
+      await setPaused($, true)
+      return { text: 'LeakStop paused: nothing is checked until you run /leakstop resume. Changes to .leakstop.json are still held.' }
+    }
+    if (args.kind === 'resume') {
+      await setPaused($, false)
+      return { text: 'LeakStop resumed.' }
+    }
+    const { fingerprints, unknown } = resolveIds(args.ids, findings)
+    if (fingerprints.length > 0) await allowForever($, fingerprints)
+    const done = fingerprints.length > 0 ? `Allowed for good: ${fingerprints.join(' ')}.` : 'Nothing was allowed.'
+    return { text: unknown.length > 0 ? `${done} Not recognised: ${unknown.join(', ')}.\n${USAGE}` : done }
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey) return next(e)
+    const { value: banner = [] } = await $.state.get(bannerRef)
+    const { value: paused = false } = await $.state.get(pausedRef)
+    if (!paused && banner.length === 0) return next(e)
+
+    const { Box, Text } = $.ui.resolve(e)
+    return (
+      <Box>
+        <Text color={paused ? 'red' : 'yellow'}>{bannerLine(banner, paused, e.props.bodyColumns)}</Text>
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const { value: findings = [] } = await $.state.get(findingsRef)
+    const { value: paused = false } = await $.state.get(pausedRef)
+    const width = e.props.bodyColumns
+    const room = Math.max(1, Math.floor(((e.viewport?.rows ?? 24) - 4) / 2))
+    const rows = historyRows(findings, width).slice(0, room)
+
+    return (
+      <Box flexDirection="column">
+        {paused && <Text color="red">{fit('PAUSED · nothing is being checked', width)}</Text>}
+        {rows.length === 0 && <Text dimColor>No findings this session.</Text>}
+        {rows.map((row) => (
+          <Box flexDirection="column">
+            <Text>{row.head}</Text>
+            <Text dimColor>{row.detail}</Text>
+          </Box>
+        ))}
+        <Box gap={2}>
+          <Button key="pause" hotkey="1" label={paused ? 'Resume' : 'Pause'} onPress={() => setPaused($, !paused)} />
+          <Button key="close" hotkey="2" label="Close" onPress={() => $.ui.close({ id: PANE })} />
+        </Box>
+      </Box>
+    )
+  })
 
   on('tool.call', { tool: ['Edit', 'Write', 'NotebookEdit'] }, async ($, e, next) => {
     const call = scanCall(e)
