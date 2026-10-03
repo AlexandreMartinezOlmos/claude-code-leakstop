@@ -401,11 +401,14 @@ async function checkSearch($: EngineInterface, search: Search, mode: Mode, allow
       // A folder that cannot be listed (or takes too long) is not a reason to block the search.
     }
   }
-  const reach = [...new Set(found)]
+  const candidates = [...new Set(found)]
     .filter((file) => classifyPath(file) !== undefined && classifyPath(file)?.requiresToken === false)
     .filter((file) => !matchesAny(file, search.excludes))
     .filter((file) => search.includes.length === 0 || matchesAny(file, search.includes))
     .slice(0, 20)
+  // A search that honours .gitignore never opens the files git ignores (a plain .env).
+  const reach: string[] = []
+  for (const file of candidates) if (!(search.respectsIgnore && (await isIgnored($, file)))) reach.push(file)
   if (reach.length === 0) return undefined
 
   const note = await operation('sensitive-search', 'Search through sensitive files', `search:${[...reach].sort().join('\n')}`)

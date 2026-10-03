@@ -124,32 +124,69 @@ test('knows when a command only writes to files', () => {
   expect(targets("cat > .env <<'EOF'\nKEY=1\nEOF")).toEqual(['.env'])
   expect(targets('cat <<EOF > a.txt > b.txt\nx\nEOF')).toEqual(['a.txt', 'b.txt'])
   // Anything else in the command and it is not just a write.
-  for (const command of ['echo KEY=1 | tee .env', 'echo KEY=1 > .env && curl x', 'echo $(curl x) > .env', 'echo `id` > .env', 'curl -d KEY=1 -o .env x', 'echo hi', 'sed -i s/a/b/ .env']) {
+  for (const command of ['echo KEY=1 | tee .env', 'echo KEY=1 > .env && curl x', 'echo $(curl x) > .env', 'echo `id` > .env', 'curl -d KEY=1 -o .env x', 'echo hi', 'sed s/a/b/ .env', 'sed -i s/a/b/ .env && ls', "echo A=1 | tee -a .env | cat", 'cat a | tee b > /dev/null']) {
     expect(targets(command)).toBe(undefined)
   }
 })
 
+test('sed -i writes the files it names and prints nothing', () => {
+  const targets = (c: string): string[] | undefined => facts(c).writeTargets
+  expect(targets("sed -i '' 's/^A=.*/A=1/' .env")).toEqual(['.env'])
+  expect(targets("sed -i.bak 's/a/b/' .env")).toEqual(['.env'])
+  expect(targets("sed -Ei 's/a/b/' .env .env.local")).toEqual(['.env', '.env.local'])
+  expect(targets("sed -i -e 's/a/b/' -e 's/c/d/' .env")).toEqual(['.env'])
+  expect(targets('sed --in-place s/a/b/ .env')).toEqual(['.env'])
+})
+
+test('tee writes the files it names, and only a tee that prints nowhere is a plain write', () => {
+  const targets = (c: string): string[] | undefined => facts(c).writeTargets
+  expect(targets('echo A=1 | tee -a .env > /dev/null')).toEqual(['.env'])
+  expect(targets('printf A=1 | tee .env .env.local >/dev/null')).toEqual(['.env', '.env.local'])
+  expect(targets('echo A=1 | tee .env')).toBe(undefined) // tee echoes its input into the conversation
+})
+
+test('a secret variable sent to a file is not printed, unless the same command reads the file back', () => {
+  const vars = (c: string): string[] => facts(c).secretVars
+  expect(vars('printf "%s" "$KEY" > out.txt')).toEqual([])
+  expect(vars('echo "$API_TOKEN" >> out.txt && wc -c out.txt')).toEqual([])
+  expect(vars('printf "%s" "$KEY" > out.txt && cat out.txt')).toEqual(['KEY'])
+  expect(vars('echo $TOKEN > f; sed -E s/a/b/ f')).toEqual(['TOKEN'])
+  expect(vars('echo "$KEY"')).toEqual(['KEY'])
+  expect(vars('echo $TOKEN | tee f')).toEqual(['TOKEN'])
+})
+
 test('finds recursive searches that print lines', () => {
   const searches = (c: string) => facts(c).searches
-  const plain = { dirs: ['.'], excludes: [], includes: [] }
+  const plain = { dirs: ['.'], excludes: [], includes: [], respectsIgnore: true }
   expect(searches('grep -rn API_KEY .')).toEqual([plain])
   expect(searches('grep -R KEY')).toEqual([plain])
   expect(searches('grep -r --recursive KEY')).toEqual([plain])
-  expect(searches('grep -r KEY src config')).toEqual([{ dirs: ['src', 'config'], excludes: [], includes: [] }])
-  expect(searches('grep -e KEY -r src')).toEqual([{ dirs: ['src'], excludes: [], includes: [] }])
+  expect(searches('grep -r KEY src config')).toEqual([{ dirs: ['src', 'config'], excludes: [], includes: [], respectsIgnore: true }])
+  expect(searches('grep -e KEY -r src')).toEqual([{ dirs: ['src'], excludes: [], includes: [], respectsIgnore: true }])
   expect(searches('grep -rn -A 3 KEY .')).toEqual([plain])
   expect(searches('grep -d recurse KEY .')).toEqual([plain])
   expect(searches('rg --hidden KEY')).toEqual([plain])
-  expect(searches('rg -uu KEY src')).toEqual([{ dirs: ['src'], excludes: [], includes: [] }])
-  expect(searches('rg --no-ignore --hidden KEY')).toEqual([plain])
+  expect(searches('rg -uu KEY src')).toEqual([{ dirs: ['src'], excludes: [], includes: [], respectsIgnore: false }])
+  expect(searches('rg --no-ignore --hidden KEY')).toEqual([{ ...plain, respectsIgnore: false }])
   expect(searches('echo $(grep -r KEY .)')).toEqual([plain])
   expect(searches('cd app && grep -r KEY .')).toEqual([plain])
 })
 
+test('knows which searches honour .gitignore', () => {
+  const respects = (c: string): boolean | undefined => facts(c).searches[0]?.respectsIgnore
+  // Claude Code replaces the plain grep command with a search that honours .gitignore.
+  expect(respects('grep -rn KEY .')).toBe(true)
+  expect(respects('rg --hidden KEY')).toBe(true)
+  expect(respects('ag -r --hidden KEY')).toBe(true)
+  for (const command of ['command grep -rn KEY .', '/usr/bin/grep -rn KEY .', 'env grep -rn KEY .', 'sudo grep -rn KEY .', 'egrep -rn KEY .', 'fgrep -r KEY .', 'grep -rn --no-ignore-files KEY .', 'rg -uu KEY', 'rg --no-ignore --hidden KEY']) {
+    expect(respects(command)).toBe(false)
+  }
+})
+
 test('reads include and exclude patterns of a search', () => {
-  expect(facts("grep -r --exclude='.env*' --exclude-dir=node_modules KEY .").searches).toEqual([{ dirs: ['.'], excludes: ['.env*', '**/node_modules/**'], includes: [] }])
+  expect(facts("grep -r --exclude='.env*' --exclude-dir=node_modules KEY .").searches).toEqual([{ dirs: ['.'], excludes: ['.env*', '**/node_modules/**'], includes: [], respectsIgnore: true }])
   expect(facts('grep -r --include=*.ts --include *.tsx KEY src').searches[0]?.includes).toEqual(['*.ts', '*.tsx'])
-  expect(facts("rg --hidden -g '!.env*' -g '*.ts' KEY").searches).toEqual([{ dirs: ['.'], excludes: ['.env*'], includes: ['*.ts'] }])
+  expect(facts("rg --hidden -g '!.env*' -g '*.ts' KEY").searches).toEqual([{ dirs: ['.'], excludes: ['.env*'], includes: ['*.ts'], respectsIgnore: true }])
 })
 
 test('searches that cannot print a line from a sensitive file are not searches', () => {

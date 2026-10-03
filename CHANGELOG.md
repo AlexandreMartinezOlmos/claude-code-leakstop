@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-- A recursive `grep` or `rg` over a folder that holds sensitive files (`.env`, keys, credentials) is now held, since `grep` ignores `.gitignore` and would print their values. Excluding those files (`--exclude`, `-g '!…'`), limiting the search (`--include`) or listing only names (`-l`, `-c`) keeps it quiet.
+- A recursive `grep` or `rg` over a folder that holds sensitive files (`.env`, keys, credentials) is now held when the search would really reach them. Claude Code's own `grep` and `rg` honour `.gitignore`, so a plain `grep -r KEY .` no longer asks because of an ignored `.env`; `command grep`, `/usr/bin/grep`, `egrep`, `rg --no-ignore` and `rg -uu` still do. Excluding those files (`--exclude`, `-g '!…'`), limiting the search (`--include`) or listing only names (`-l`, `-c`) keeps it quiet.
+- The message Claude reads after a denial now says what you did: Cancel ("do not retry"), Use environment variable or Add to .gitignore ("do it now"), or your own words when you type an answer. Before, all of them read the same and Claude asked you again.
+- Denying a read of `.env` now tells Claude it can append a variable with `echo 'NAME=value' >> .env`.
+- `sed -i` and `tee … > /dev/null` that write a secret into a file git ignores (such as `.env`) now pass, like `echo >> .env` already did.
+- `printf "$KEY" > file` (and `echo`) no longer counts as printing the variable: its output goes to the file. Reading that file back in the same command still does.
 
 ## 0.1.0
 

@@ -136,6 +136,43 @@ test('the same secret is still held when the file is not ignored, or the command
   expect(env.commands).toEqual([])
 })
 
+test('sed -i and a quiet tee into a git-ignored file pass, and are held anywhere else', async ($, on) => {
+  const secret = token()
+  const env = toolsRun(on)
+  const asked = answerWith(on, CANCEL)
+  gitScript(on, ignoring('.env'))
+  const allowed = [
+    `sed -i '' 's/^ANTHROPIC_API_KEY=.*/ANTHROPIC_API_KEY=${secret}/' .env`,
+    `sed -i.bak "s|^KEY=.*|KEY=${secret}|" .env`,
+    `echo "ANTHROPIC_API_KEY=${secret}" | tee -a .env > /dev/null`,
+  ]
+  for (const command of allowed) expect(ran(await bash($, command))).toBe(true)
+  expect(asked.questions.length).toBe(0)
+  expect(env.commands).toEqual(allowed)
+  // Not ignored, printed back by tee, or more than a write: held.
+  for (const command of [
+    `sed -i '' 's/^KEY=.*/KEY=${secret}/' .env.production`,
+    `echo "KEY=${secret}" | tee -a .env`,
+    `sed -i '' 's/^KEY=.*/KEY=${secret}/' .env && cat .env`,
+  ]) {
+    expect(isDenied(await bash($, command))).toBe(true)
+  }
+  expect(asked.questions.length).toBe(3)
+})
+
+test('a secret variable sent to a file passes; reading the file back in the same command is held', async ($, on) => {
+  const env = toolsRun(on)
+  const asked = answerWith(on, CANCEL)
+  gitScript(on, () => ({ exitCode: 1 }))
+  const quiet = `KEY="$(./fake anthropic)" && printf 'export const apiKey = "%s";\n' "$KEY" > src/config.ts && wc -c src/config.ts`
+  expect(ran(await bash($, quiet))).toBe(true)
+  expect(asked.questions.length).toBe(0)
+  expect(env.commands).toEqual([quiet])
+  const loud = `KEY="$(./fake anthropic)" && printf '%s' "$KEY" > src/config.ts && cat src/config.ts`
+  expect(isDenied(await bash($, loud))).toBe(true)
+  expect(asked.questions.length).toBe(1)
+})
+
 test('outside a git repository the write is still held', async ($, on) => {
   toolsRun(on)
   answerWith(on, CANCEL)
@@ -230,7 +267,9 @@ test('a sensitive read is held in strict mode too, and warns in monitor mode', {
 
 // --- Recursive searches --------------------------------------------------------------
 
-const finds = (...files: string[]) => (argv: string[]) => (argv[0] === 'find' ? `${files.join('\n')}\n` : undefined)
+/** `find` lists `files`; git ignores none of them unless `ignored` says so. */
+const finds = (...files: string[]) => (argv: string[]) => (argv[0] === 'find' ? `${files.join('\n')}\n` : argv[0] === 'check-ignore' ? { exitCode: 1 } : undefined)
+const findsIgnored = (...files: string[]) => (argv: string[]) => (argv[0] === 'find' ? `${files.join('\n')}\n` : undefined)
 
 test('grep -r over a folder that holds sensitive files is held, and the message names them', async ($, on) => {
   const env = toolsRun(on)
@@ -242,6 +281,27 @@ test('grep -r over a folder that holds sensitive files is held, and the message 
   expect(r.deny.includes('.env.example')).toBe(false)
   expect(r.deny.includes('id_rsa.pub')).toBe(false)
   expect(asked.options[0]).toEqual([ALLOW_ONCE, CANCEL])
+  expect(env.commands).toEqual([])
+})
+
+test('grep -r does not open the files git ignores, so an ignored .env is not in reach', async ($, on) => {
+  const env = toolsRun(on)
+  const asked = answerWith(on, CANCEL)
+  gitScript(on, findsIgnored('./.env', './apps/web/.env.local'))
+  expect(ran(await bash($, 'grep -rn API_KEY .'))).toBe(true)
+  expect(ran(await bash($, 'rg --hidden API_KEY'))).toBe(true)
+  expect(asked.questions.length).toBe(0)
+  expect(env.commands.length).toBe(2)
+})
+
+test('a search that skips that behaviour reaches ignored files and is held', async ($, on) => {
+  const env = toolsRun(on)
+  const asked = answerWith(on, CANCEL)
+  gitScript(on, findsIgnored('./.env'))
+  for (const command of ['command grep -rn KEY .', '/usr/bin/grep -rn KEY .', 'egrep -rn KEY .', 'grep -rn --no-ignore-files KEY .', 'rg -uu KEY', 'rg --no-ignore --hidden KEY']) {
+    expect(isDenied(await bash($, command))).toBe(true)
+  }
+  expect(asked.questions.length).toBe(6)
   expect(env.commands).toEqual([])
 })
 
