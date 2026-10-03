@@ -661,9 +661,10 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // A warning stays above the prompt until the user's next message.
+  // A warning stays above the prompt until the user's next message. A background agent finishing, a peer
+  // session or a schedule also submit prompts: they are not the user reading the warning.
   on('prompt.submit', async ($, e, next) => {
-    await clearBanner($)
+    if (e.origin?.kind === 'composer' || e.origin?.kind === 'bridge') await clearBanner($)
     return next(e)
   })
 

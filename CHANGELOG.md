@@ -5,6 +5,7 @@
 - Outbound tools are watched. A secret in what `WebFetch`, `WebSearch`, `Agent`, `SendMessage`, `SendFile`, `Artifact`, `ArtifactData`, `ArtifactComments`, `PushNotification`, `SendFeedback`, `RemoteTrigger` or any MCP tool is about to send away is held (a weaker finding warns, and `strict` holds it), with a question that says where it would go and a message to Claude that says what to do instead. `SendFile` and `Artifact` also send local files: those are read and scanned, and a sensitive file (`.env`, keys, credentials) is held outright. In `monitor` mode it only warns, and an internal failure denies in `standard` and `strict`.
 
 - `/leakstop allowed` lists what is allowed (this session, for good, `.leakstop.json`) with the fingerprint and, when known, the type and place of each; `/leakstop forget <number or sha256:…>` and `/leakstop forget all` take back what you allowed; `/leakstop reload` reads `.leakstop.json` again without restarting. `forget` and `reload` only work when you type them.
+- The warning banner now stays until you send your next message. Before, a background agent finishing (or a peer session, or a schedule) cleared it, so a warning raised by an `Agent` call vanished in seconds.
 - A command name written with quotes or a backslash (`\grep`, `"grep"`) is no longer assumed to be Claude Code's `.gitignore`-aware `grep`, so a recursive search written that way is held when it would reach a sensitive file.
 
 ## 0.1.1

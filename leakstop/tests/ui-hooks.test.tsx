@@ -227,6 +227,20 @@ for (const surface of SURFACES) {
     expect((await mounted.find({ text: 'engine default band' }))?.text).toBe('engine default band')
   })
 
+  test(`${surface}: a background agent finishing or a peer message does not clear the banner`, async ($, on) => {
+    setup(on)
+    await write($, 'tests/fixtures/user.json', MEDIUM())
+    const mounted = await band($, surface, { ...BAND_PROPS, bodyColumns: 100 })
+    for (const origin of [{ kind: 'task-notification' }, { kind: 'peer' }, { kind: 'scheduled-trigger' }, { kind: 'plugin', name: 'other' }]) {
+      await $.prompt.submit({ text: 'Agent finished', origin })
+      await mounted.redraw()
+      expect(await mounted.find({ text: /LeakStop · MEDIUM/ })).not.toBe(undefined)
+    }
+    await $.prompt.submit({ text: 'thanks', origin: { kind: 'bridge' } })
+    await mounted.redraw()
+    expect(await mounted.find({ text: /LeakStop · MEDIUM/ })).toBe(undefined)
+  })
+
   test(`${surface}: the banner yields to a survey and shows nothing when there is nothing to say`, async ($, on) => {
     setup(on)
     await write($, 'tests/fixtures/user.json', MEDIUM())
