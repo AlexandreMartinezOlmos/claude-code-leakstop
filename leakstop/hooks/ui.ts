@@ -157,7 +157,8 @@ export const USAGE = [
   '  /leakstop resume          start checking again',
   '  /leakstop allow <id>...   allow findings for good: a number from the history or a sha256:… fingerprint',
   '  /leakstop allowed         list what is allowed: for this session, for good, and by .leakstop.json',
-  '  /leakstop forget <id>...  stop allowing findings (a history number or a sha256:… fingerprint), or `all` of yours',
+  '  /leakstop forget <id>...  stop allowing findings: a history number or a sha256:… fingerprint',
+  '  /leakstop forget all      stop allowing everything you allowed (what .leakstop.json allows stays)',
   '  /leakstop reload          read .leakstop.json again',
 ].join('\n')
 

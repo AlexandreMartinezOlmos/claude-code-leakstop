@@ -13,8 +13,14 @@ export const OUTBOUND_TOOLS = ['WebFetch', 'WebSearch', 'Agent', 'SendMessage', 
 const RESERVED = new Set(['tool', 'tool_use_id', 'agentId'])
 
 const MAX_PARTS = 200
+/** Text past MAX_PARTS is scanned as one block, up to this many characters. */
+const MAX_OVERFLOW = 1024 * 1024
 const MAX_DEPTH = 6
-const MAX_FILES = 20
+/** Files whose paths are checked; only the first MAX_READ of them are opened. */
+const MAX_FILES = 200
+export const MAX_READ = 20
+/** Keys shorter than this cannot be a provider token by themselves. */
+const MIN_KEY = 16
 
 /** A piece of text the call carries, and the argument it came from (`prompt`, `batch[0].payload`). */
 export type Part = { field: string; text: string }
@@ -58,32 +64,56 @@ function filesNamed(input: Record<string, unknown>): string[] {
   return [...new Set(files)]
 }
 
-/** The text of a call and the files it sends. */
+/** The text of a call and the files it sends. Nothing is dropped: past the limits the rest is folded into one block. */
 export function collect(input: Record<string, unknown>): Outbound {
   const texts: Part[] = []
+  let overflow = ''
   let isTruncated = false
+  const add = (field: string, text: string): void => {
+    if (texts.length < MAX_PARTS) {
+      texts.push({ field, text })
+    } else if (overflow.length + text.length + 1 <= MAX_OVERFLOW) {
+      overflow += overflow === '' ? text : `\n${text}`
+    } else {
+      isTruncated = true
+    }
+  }
   const walk = (value: unknown, field: string, depth: number): void => {
     if (typeof value === 'string') {
-      if (value === '') return
-      if (texts.length >= MAX_PARTS) isTruncated = true
-      else texts.push({ field, text: value })
+      if (value !== '') add(field, value)
+    } else if (value === null || typeof value !== 'object') {
+      return
     } else if (depth >= MAX_DEPTH) {
-      if (value !== null && typeof value === 'object') isTruncated = true
+      // Too deep to follow: its text is scanned as it is serialized.
+      try {
+        add(field, JSON.stringify(value))
+      } catch {
+        isTruncated = true
+      }
     } else if (Array.isArray(value)) {
       value.forEach((item, index) => walk(item, `${field}[${index}]`, depth + 1))
-    } else if (isRecord(value)) {
+    } else {
+      // A key can hold a secret too (a map keyed by token), so the long ones are scanned, as one block.
+      const keys = Object.keys(value).filter((key) => key.length >= MIN_KEY)
+      if (keys.length > 0) add(`${field} (names)`, keys.join('\n'))
       for (const [key, item] of Object.entries(value)) walk(item, `${field}.${key}`, depth + 1)
     }
   }
   for (const [key, value] of Object.entries(input)) if (!RESERVED.has(key)) walk(value, key, 0)
+  if (overflow !== '') texts.push({ field: '(further arguments)', text: overflow })
 
   const named = filesNamed(input)
   return { texts, files: named.slice(0, MAX_FILES), isTruncated: isTruncated || named.length > MAX_FILES }
 }
 
+/** Files that cannot hold a readable secret: reading them as text only costs time. */
+export const isLikelyBinary = (path: string): boolean => /\.(?:png|jpe?g|gif|webp|avif|ico|bmp|tiff?|pdf|woff2?|ttf|otf|eot|mp[34]|m4a|mov|webm|wav|ogg|zip|gz|tgz|bz2|xz|7z|rar|wasm|bin|exe|dylib|so|class|jar|sqlite3?)$/i.test(path)
+
+const MCP_NAME = /^mcp__(.+?)__(.+)$/
+
 /** `mcp__srv__tool` as `MCP srv/tool`; a built-in tool is its own name. */
 export function toolLabel(tool: string): string {
-  const match = /^mcp__(.+?)__(.+)$/.exec(tool)
+  const match = MCP_NAME.exec(tool)
   return match === null ? tool : `MCP ${match[1]}/${match[2]}`
 }
 
@@ -114,6 +144,6 @@ export function destinationOf(tool: string): string {
     case 'RemoteTrigger':
       return 'to a remote trigger'
     default:
-      return tool.startsWith('mcp__') ? `to the MCP server ${/^mcp__(.+?)__/.exec(tool)?.[1] ?? ''}` : 'outside the session'
+      return MCP_NAME.test(tool) ? `to the MCP server ${MCP_NAME.exec(tool)?.[1] ?? ''}` : 'outside the session'
   }
 }

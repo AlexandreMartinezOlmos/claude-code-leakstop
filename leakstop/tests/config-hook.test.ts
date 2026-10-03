@@ -193,3 +193,14 @@ test('forget cannot remove what the project allows, and says so', async ($, on) 
   expect(result.text).toBe('Nothing of yours was allowed, so nothing changed.\nStill allowed by .leakstop.json (edit that file to remove): sha256:aaaaaaaaaaaaaaaa.')
   expect((await slash($, 'forget all')).text.includes('Still allowed by .leakstop.json')).toBe(true)
 })
+
+test('ignorePaths relaxes a weaker finding in a file an outbound call names by its absolute path', async ($, on) => {
+  const { files, env } = (() => {
+    const base = setup(on, { ignorePaths: ['tests/**'] })
+    return { files: base.files, env: base.env }
+  })()
+  files['tests/fixtures/user.json'] = MEDIUM()
+  await start($)
+  expect(ran(await $.tool.call({ tool: 'SendFile', to: 'peer', files: ['/work/app/tests/fixtures/user.json'] }))).toBe(true)
+  expect(env.findings()).toEqual([])
+})
