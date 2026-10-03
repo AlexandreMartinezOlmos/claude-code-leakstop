@@ -298,10 +298,10 @@ test('a search that skips that behaviour reaches ignored files and is held', asy
   const env = toolsRun(on)
   const asked = answerWith(on, CANCEL)
   gitScript(on, findsIgnored('./.env'))
-  for (const command of ['command grep -rn KEY .', '/usr/bin/grep -rn KEY .', 'egrep -rn KEY .', 'grep -rn --no-ignore-files KEY .', 'rg -uu KEY', 'rg --no-ignore --hidden KEY']) {
+  for (const command of ['command grep -rn KEY .', '/usr/bin/grep -rn KEY .', 'egrep -rn KEY .', 'grep -rn --no-ignore-files KEY .', 'rg -uu KEY', 'rg --no-ignore --hidden KEY', '\\grep -rn KEY .', '"grep" -rn KEY .']) {
     expect(isDenied(await bash($, command))).toBe(true)
   }
-  expect(asked.questions.length).toBe(6)
+  expect(asked.questions.length).toBe(8)
   expect(env.commands).toEqual([])
 })
 

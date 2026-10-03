@@ -52,6 +52,7 @@ Most of the time you do nothing: LeakStop stays quiet until something looks dang
 - **Commands Claude runs.** A literal secret in a command (`curl -H "Authorization: Bearer …"`, `export TOKEN=…`, `--build-arg`); `cat`, `head`, `less` or `grep` of `.env`, `*.pem`, `id_rsa` and similar files; recursive searches such as `grep -r KEY .` when they would reach a sensitive file (inside Claude Code, a plain `grep` and `rg` skip files that git ignores, so an ignored `.env` is safe; a sensitive file that git does not ignore, `command grep`, `/usr/bin/grep` or `rg --no-ignore` are not); `printenv`, `env`, `echo $TOKEN`; and `git add -A` or `git add .` when it would stage a sensitive file that git does not ignore.
 - **Commits and pushes.** It reads the lines a `git commit` would add and the commits a `git push` would publish, and blocks them if they hold a secret.
 - **Files Claude reads.** Reading a sensitive file puts its contents in the conversation, so that is held too.
+- **What Claude sends out.** A secret in a `WebFetch` URL or prompt, a `WebSearch` query, an `Agent` prompt, a `SendMessage`, a push notification, feedback to Anthropic, an `Artifact` page or its database, a remote trigger, or *any argument of an MCP tool* is held before it leaves the session, because it cannot be taken back. `SendFile` and `Artifact` also send files: LeakStop reads them first, and holds `.env`, keys and other sensitive files outright. The question says where it would go (a web server, another agent, a page other people may open, an MCP server). `SendUserFile` and `SendUserMessage` are not watched: they only reach you.
 
 Placeholders (`your-api-key`, `changeme`, `<TOKEN>`), Amazon's documentation example key, commit hashes, UUIDs and lockfile hashes are recognised and left alone.
 
@@ -70,8 +71,11 @@ Placeholders (`your-api-key`, `changeme`, `<TOKEN>`), Amazon's documentation exa
 | `/leakstop pause` | Stops checking until you resume. Changes to `.leakstop.json` are still held. A banner reminds you it is paused |
 | `/leakstop resume` | Starts checking again |
 | `/leakstop allow 3` | Allows finding number 3 from the history **for good**, on this machine. You can also give the `sha256:…` fingerprint shown in a block message |
+| `/leakstop allowed` | Lists everything that is allowed and where each came from: this session (*Allow once*), for good (`/leakstop allow`) or `.leakstop.json`. Each row shows the fingerprint and, when the history knows it, the type and place, never the secret |
+| `/leakstop forget 3` | Stops allowing finding number 3 (or a `sha256:…` fingerprint). `/leakstop forget all` drops everything you allowed, for good and for this session. What `.leakstop.json` allows is removed by editing that file |
+| `/leakstop reload` | Reads `.leakstop.json` again, so an edit applies without restarting, and says what it found |
 
-`pause`, `resume` and `allow` only work when **you** type them. If Claude, another session or another plugin tries to run them, LeakStop refuses.
+`pause`, `resume`, `allow`, `forget` and `reload` only work when **you** type them. If Claude, another session or another plugin tries to run them, LeakStop refuses. `/leakstop allowed` only reads, so it works from anywhere.
 
 ### Protection level
 
@@ -139,10 +143,12 @@ LeakStop runs with the same access as Claude Code and is not sandboxed, so it is
   $ claude plugin validate ./leakstop --strict        (abridged)
   ./leakstop.tsx hooks: session.start, prompt.submit, command.run{command=leakstop},
       ui.render{component=AbovePrompt}, ui.render{component=Pane, requestId=leakstop},
-      tool.call{tool=Edit|Write|NotebookEdit}, tool.call{tool=Bash}, tool.call{tool=Read}
+      tool.call{tool=Edit|Write|NotebookEdit}, tool.call{tool=Bash}, tool.call{tool=Read},
+      tool.call{tool=WebFetch|WebSearch|Agent|SendMessage|SendFile|Artifact|…},
+      tool.call{tool=/"^mcp__"/}
   ./leakstop.tsx calls: $.clock.now, $.command.register, $.fs.exists, $.fs.read, $.process.run,
-      $.session.cwd, $.session.surfaces, $.state.get, $.state.set, $.store.get, $.store.set,
-      $.ui.ask, $.ui.close, $.ui.log, $.ui.open, $.ui.resolve
+      $.session.cwd, $.session.surfaces, $.state.get, $.state.set, $.store.delete, $.store.get,
+      $.store.set, $.ui.ask, $.ui.close, $.ui.log, $.ui.open, $.ui.resolve
   ✔ Validation passed
   ```
 
@@ -157,9 +163,9 @@ LeakStop runs with the same access as Claude Code and is not sandboxed, so it is
 LeakStop is a safety net, not a wall. Please read this part.
 
 - **It reads text; it does not run anything.** A secret that is base64-encoded, split across variables, built by a script (`python -c`, `node -e`) or read by a program is not seen. Commands such as `git show HEAD:.env` or `find -exec cat` are not covered either.
-- **It does not look at tools that send data out yet.** LeakStop covers the tools that read or write local files and the shell. It does not scan what goes into web requests, messages to other agents or sessions, sent files or other MCP tools.
+- **It only watches the tools it knows send data out.** It scans `WebFetch`, `WebSearch`, `Agent`, `SendMessage`, `SendFile`, `Artifact`, `ArtifactData`, `ArtifactComments`, `PushNotification`, `SendFeedback`, `RemoteTrigger` and every MCP tool, but it cannot tell what an MCP tool *does* with what it is given. In particular, an MCP tool that writes files can edit `.leakstop.json` (the protection of that file covers `Write`, `Edit`, `NotebookEdit` and shell commands) and can write a secret into a file git ignores without the ignored-file exemption applying: it is held like any other secret leaving the session.
 - **It can be switched off without telling you.** `--safe-mode`, `--bare`, `disableAllHooks` in your settings, an organisation policy, or Anthropic switching installed mods off remotely all stop it. Check `/plugin` now and then.
-- **Where nothing can be drawn, it cannot ask.** In `claude -p`, the Agent SDK, the cloud and the VS Code chat panel, anything LeakStop would hold is **denied** (it never hangs), which can break an automation; use `monitor` mode there. Warnings are written to the transcript instead of the banner.
+- **Where nothing can be drawn, it cannot ask.** In `claude -p`, the Agent SDK and the cloud, anything LeakStop would hold is **denied** (it never hangs), which can break an automation; use `monitor` mode there. Warnings are written to the transcript instead of the banner. The VS Code chat panel does show the question (as one line, since it runs line breaks together) but draws no banner or history panel: `/leakstop` answers as text.
 - **It also fires on harmless things sometimes.** Weaker signals can be test data or documentation examples. That is why they only warn by default, and why `ignorePaths` exists.
 - **WSL sessions of the desktop app** do not run plugins, so LeakStop is not active there.
 - **Pair it with other tools.** For a hard guarantee, combine it with Claude Code permission rules (for example denying `Read(.env)`), a pre-commit scanner such as gitleaks, and GitHub push protection. It is not a scanner of your git history.
@@ -169,9 +175,9 @@ Claude Code mods are still an early-access feature and their interface can chang
 ## Troubleshooting
 
 - **I installed it but see nothing.** That is normal until something looks dangerous. Open `/plugin` to confirm it is active, then run `/leakstop` to see whether it has recorded anything.
-- **It holds something that is fine.** Choose *Allow once*, or run `/leakstop allow <number>` to allow that exact finding for good. For a whole folder of test data, use `ignorePaths`.
+- **It holds something that is fine.** Choose *Allow once*, or run `/leakstop allow <number>` to allow that exact finding for good (and `/leakstop forget` to take it back). For a whole folder of test data, use `ignorePaths`.
 - **I want to try it without risk.** Switch to `monitor` mode: it only warns and logs, and `/leakstop` shows what it would have held.
-- **It says `.leakstop.json` has a problem.** The message says what was ignored and why. Fix the file and run `/reload-plugins`.
+- **It says `.leakstop.json` has a problem.** The message says what was ignored and why. Fix the file and run `/leakstop reload` (or `/reload-plugins`).
 
 ## Development
 

@@ -178,7 +178,7 @@ test('knows which searches honour .gitignore', () => {
   expect(respects('grep -rn KEY .')).toBe(true)
   expect(respects('rg --hidden KEY')).toBe(true)
   expect(respects('ag -r --hidden KEY')).toBe(true)
-  for (const command of ['command grep -rn KEY .', '/usr/bin/grep -rn KEY .', 'env grep -rn KEY .', 'sudo grep -rn KEY .', 'egrep -rn KEY .', 'fgrep -r KEY .', 'grep -rn --no-ignore-files KEY .', 'rg -uu KEY', 'rg --no-ignore --hidden KEY']) {
+  for (const command of ['command grep -rn KEY .', '/usr/bin/grep -rn KEY .', 'env grep -rn KEY .', 'sudo grep -rn KEY .', 'egrep -rn KEY .', 'fgrep -r KEY .', 'grep -rn --no-ignore-files KEY .', 'rg -uu KEY', 'rg --no-ignore --hidden KEY', '\\grep -rn KEY .', '"grep" -rn KEY .', "'grep' -rn KEY .", 'gr\\ep -rn KEY .']) {
     expect(respects(command)).toBe(false)
   }
 })
@@ -218,4 +218,15 @@ test('the body of a quoted heredoc is text: nothing in it is a substitution', ()
 test('an unquoted heredoc body is expanded by the shell, so its substitutions still count', () => {
   expect(facts('cat <<EOF\n$(echo $TOKEN)\nEOF').secretVars).toEqual(['TOKEN'])
   expect(facts("cat <<'EOF'\nx\nEOF\necho $(printenv)").isEnvDump).toBe(true)
+})
+
+test('the parser says which words were written with quotes or a backslash', () => {
+  expect(parseCommand('\\grep -r "KEY" .').map((s) => s.quoted)).toEqual([[true, false, true, false]])
+  expect(parseCommand('cat > out.txt <<EOF').map((s) => s.quoted)).toEqual([[false, false, false, false]])
+})
+
+test('an escaped or quoted command name is not read as the plain grep, but an escaped argument is harmless', () => {
+  const respects = (c: string): boolean | undefined => analyzeCommand(c).searches[0]?.respectsIgnore
+  expect(respects('grep -rn \\KEY .')).toBe(true)
+  expect(respects('grep -rn "KEY" .')).toBe(true)
 })

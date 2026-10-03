@@ -6,6 +6,7 @@
 
 import { classifyPath } from './detect.ts'
 import type { MaskedFinding } from './mask.ts'
+import { destinationOf, toolLabel } from './outbound.ts'
 
 /** The labels of the options in the dialogs. */
 export const USE_ENV = 'Use environment variable'
@@ -36,6 +37,18 @@ export function answerNote(answer: string | undefined): string {
       return `The user picked no option and answered: "${shown}". That is not an approval of the original action; follow what they said, and ask them if it is unclear.`
     }
   }
+}
+
+/**
+ * The question as one line, for a surface that does not keep line breaks (the VS Code panel runs them
+ * together into one paragraph): the lines read in order, set apart by dashes.
+ */
+export function flatten(question: string): string {
+  return question
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+    .join(' — ')
 }
 
 /** The tools whose write is checked. */
@@ -237,4 +250,35 @@ export function searchQuestion(files: readonly string[]): string {
 
 export function searchDeny(files: readonly string[]): string {
   return `LeakStop blocked this search: it would print lines from ${list(files)}, which hold secrets, into the conversation. Search specific folders such as src/ instead, or exclude those files (for example grep -r --exclude='.env*' …, or rg -g '!.env*'). To list only the files that match, use grep -rl or rg -l.`
+}
+
+// --- Outbound tools ------------------------------------------------------------
+
+type Located = MaskedFinding & { path: string }
+
+/** What the model reads when a call that sends something away is denied: where the secret is and what to do instead. */
+export function outboundDeny(tool: string, findings: readonly Located[]): string {
+  const what = findings.slice(0, 5).map((f) => `${f.path} contains ${typeOf(f)}${hint(f)}`).join('; ')
+  const more = findings.length > 5 ? ` (and ${findings.length - 5} more)` : ''
+  return `LeakStop blocked this ${toolLabel(tool)} call: ${what}${more}. It would be sent ${destinationOf(tool)}, and a credential that leaves the session cannot be taken back. Leave the value out: describe what is needed, or name the environment variable that holds it, and send that instead.`
+}
+
+export function outboundQuestion(tool: string, findings: readonly Located[]): string {
+  const severity = findings.some((f) => f.severity === 'critical') ? 'CRITICAL' : 'MEDIUM'
+  const lines = [`LeakStop · ${severity}`]
+  // The tool is already named: "in Agent → prompt", not "in Agent → Agent › prompt".
+  const own = `${toolLabel(tool)} › `
+  for (const finding of findings.slice(0, 3)) lines.push(`${finding.label} in ${toolLabel(tool)} → ${finding.path.startsWith(own) ? finding.path.slice(own.length) : finding.path}`, `  ${finding.masked}`)
+  if (findings.length > 3) lines.push(`  …and ${findings.length - 3} more`)
+  lines.push(`This call would send it ${destinationOf(tool)}.`, '', 'How do you want to handle it?')
+  return lines.join('\n')
+}
+
+/** A file that holds secrets named in a call that sends it away. */
+export function outboundFileQuestion(tool: string, files: readonly string[]): string {
+  return ['LeakStop · CRITICAL', `${toolLabel(tool)} would send files that hold secrets`, `  ${list(files)}`, `Their contents would go ${destinationOf(tool)}.`, '', 'How do you want to handle it?'].join('\n')
+}
+
+export function outboundFileDeny(tool: string, files: readonly string[]): string {
+  return `LeakStop blocked this ${toolLabel(tool)} call: ${list(files)} hold secrets and would be sent ${destinationOf(tool)}. Do not send them. Send a copy without the secrets (for example .env.example with the values removed), or ask the user.`
 }

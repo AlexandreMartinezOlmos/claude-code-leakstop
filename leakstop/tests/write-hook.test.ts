@@ -308,3 +308,20 @@ test('no interface: the denial says nobody could be asked', async ($, on) => {
   const r = await write($, 'src/config.ts', config(token()))
   expect(r.deny.startsWith('LeakStop could not ask the user')).toBe(true)
 })
+
+// --- Surfaces that run the lines of a question together ----------------------------
+
+// In VS Code the question is one line; in the terminal and the app it keeps its line breaks.
+const SURFACE_CASES: [string[], boolean][] = [[['vscode'], true], [['terminal'], false], [['desktop'], false], [['terminal', 'vscode'], false], [[], false]]
+
+for (const [surfaces, isFlat] of SURFACE_CASES) {
+  test(`the hold question on [${surfaces.join(', ')}] is ${isFlat ? 'one line' : 'multi-line'}`, async ($, on) => {
+    toolsRun(on, { surfaces })
+    gitSays(on, 'tracked')
+    const asked = answerWith(on, CANCEL)
+    await write($, 'src/config.ts', `export const apiKey = "${token()}"\n`)
+    const question = asked.questions[0] ?? ''
+    expect(question.includes('\n')).toBe(!isFlat)
+    expect(question.includes('Anthropic API key in Write')).toBe(true)
+  })
+}

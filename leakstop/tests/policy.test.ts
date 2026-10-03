@@ -8,6 +8,7 @@ const TABLE: Record<Destination, [Action, Action, Action, Action]> = {
   'file': ['hold', 'warn', 'hold', 'hold'],
   'ignored-file': ['pass', 'pass', 'pass', 'pass'],
   'command': ['hold', 'warn', 'hold', 'hold'],
+  'outbound': ['hold', 'warn', 'hold', 'hold'],
   'sensitive-dump': ['hold', 'hold', 'hold', 'hold'],
   'git-add': ['hold', 'hold', 'hold', 'hold'],
   'git-commit': ['block', 'warn', 'block', 'block'],

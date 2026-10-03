@@ -4,6 +4,7 @@
 // here depends on the terminal's own size.
 
 import type { StoredFinding } from '../types'
+import { toolLabel } from './outbound.ts'
 
 /** `…` when a line is cut. */
 export function fit(text: string, width: number): string {
@@ -21,7 +22,7 @@ const SEVERITY = { critical: 'CRITICAL', medium: 'MEDIUM' } as const
 
 /** Where it happened: a file and line, or the command. */
 export function where(finding: StoredFinding): string {
-  if (finding.path === '') return `${finding.tool} command`
+  if (finding.path === '') return finding.tool === 'Bash' ? 'Bash command' : `${toolLabel(finding.tool)} call`
   return finding.line > 0 ? `${finding.path}:${finding.line}` : finding.path
 }
 
@@ -85,11 +86,55 @@ export function summaryText(findings: readonly StoredFinding[], paused: boolean,
   ].join('\n')
 }
 
+/** Where a fingerprint was allowed. */
+export type AllowSource = 'session' | 'forever' | 'project'
+
+const SOURCE_TEXT: Record<AllowSource, string> = { session: 'this session', forever: 'for good', project: '.leakstop.json' }
+
+export type Allowed = { fingerprint: string; sources: AllowSource[] }
+
+/** Every fingerprint that is allowed, with where each came from, in a stable order. */
+export function mergeAllowed(session: readonly string[], forever: readonly string[], project: readonly string[]): Allowed[] {
+  const merged = new Map<string, Set<AllowSource>>()
+  const add = (source: AllowSource, fingerprints: readonly string[]): void => {
+    for (const fingerprint of fingerprints) merged.set(fingerprint, (merged.get(fingerprint) ?? new Set()).add(source))
+  }
+  add('forever', forever)
+  add('session', session)
+  add('project', project)
+  return [...merged].map(([fingerprint, sources]) => ({ fingerprint, sources: [...sources] }))
+}
+
+const MAX_ALLOWED_ROWS = 25
+
+/** What is allowed, with what the history knows about each finding (a type and a place, never a value). */
+export function allowedText(allowed: readonly Allowed[], findings: readonly StoredFinding[]): string {
+  if (allowed.length === 0) return 'LeakStop · nothing is allowed: every finding is checked'
+  const known = new Map<string, StoredFinding>()
+  for (const finding of findings) known.set(finding.fingerprint, finding)
+  const rows = allowed.slice(0, MAX_ALLOWED_ROWS).map(({ fingerprint, sources }) => {
+    const finding = known.get(fingerprint)
+    const what = finding === undefined ? '' : ` · ${finding.label} · ${where(finding)}`
+    return `  ${fingerprint} · ${sources.map((source) => SOURCE_TEXT[source]).join(' + ')}${what}`
+  })
+  const hidden = allowed.length - rows.length
+  return [
+    `LeakStop · ${allowed.length} allowed`,
+    ...rows,
+    ...(hidden > 0 ? [`…and ${hidden} more`] : []),
+    'Stop allowing one with /leakstop forget <fingerprint>, or everything of yours with /leakstop forget all.',
+    ...(allowed.some((a) => a.sources.includes('project')) ? ['Fingerprints from .leakstop.json are removed by editing that file.'] : []),
+  ].join('\n')
+}
+
 export type CommandArgs =
   | { kind: 'open' }
   | { kind: 'pause' }
   | { kind: 'resume' }
   | { kind: 'allow'; ids: string[] }
+  | { kind: 'allowed' }
+  | { kind: 'forget'; ids: string[] }
+  | { kind: 'reload' }
   | { kind: 'usage' }
 
 export function parseArgs(args: string): CommandArgs {
@@ -99,6 +144,9 @@ export function parseArgs(args: string): CommandArgs {
   if (first === 'pause' && rest.length === 0) return { kind: 'pause' }
   if (first === 'resume' && rest.length === 0) return { kind: 'resume' }
   if (first === 'allow' && rest.length > 0) return { kind: 'allow', ids: rest }
+  if ((first === 'allowed' || first === 'list') && rest.length === 0) return { kind: 'allowed' }
+  if (first === 'forget' && rest.length > 0) return { kind: 'forget', ids: rest }
+  if (first === 'reload' && rest.length === 0) return { kind: 'reload' }
   return { kind: 'usage' }
 }
 
@@ -108,6 +156,10 @@ export const USAGE = [
   '  /leakstop pause           stop checking until you resume',
   '  /leakstop resume          start checking again',
   '  /leakstop allow <id>...   allow findings for good: a number from the history or a sha256:… fingerprint',
+  '  /leakstop allowed         list what is allowed: for this session, for good, and by .leakstop.json',
+  '  /leakstop forget <id>...  stop allowing findings: a history number or a sha256:… fingerprint',
+  '  /leakstop forget all      stop allowing everything you allowed (what .leakstop.json allows stays)',
+  '  /leakstop reload          read .leakstop.json again',
 ].join('\n')
 
 const FINGERPRINT = /^(?:sha256:)?([0-9a-f]{16})$/

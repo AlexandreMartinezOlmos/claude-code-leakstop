@@ -44,6 +44,8 @@ export type Watch = {
   logs: string[]
   /** The Bash commands that actually ran, after any rewrite. */
   commands: string[]
+  /** The tools that sent something away and actually ran (the ones LeakStop watches as outbound). */
+  sent: any[]
 }
 
 /**
@@ -52,11 +54,13 @@ export type Watch = {
  * LeakStop lets a call through). Returns a view of what LeakStop wrote to its
  * state, since a test's `$` has no `state` noun: the writes are watched on their way.
  */
-export function toolsRun(on: any, options: { surfaces?: string[] } = {}): Watch {
+export function toolsRun(on: any, options: { surfaces?: string[]; noClock?: boolean } = {}): Watch {
   const written: Record<string, any> = {}
   const logs: string[] = []
   const commands: string[] = []
-  on('clock.now', () => ({ value: 1_700_000_000_000 }))
+  const sent: any[] = []
+  // Without a clock the engine has nothing to answer `$.clock.now` with: a way to make LeakStop throw.
+  if (options.noClock !== true) on('clock.now', () => ({ value: 1_700_000_000_000 }))
   on('session.cwd', () => ({ value: CWD }))
   on('session.surfaces', () => ({ value: options.surfaces ?? [] }))
   on('ui.log', (_$: any, e: any) => {
@@ -71,7 +75,13 @@ export function toolsRun(on: any, options: { surfaces?: string[] } = {}): Watch 
     if (e.tool === 'Bash') commands.push(e.command)
     return { result: 'ok' }
   })
-  return { findings: () => written.findings ?? [], allowOnce: () => written.allowOnce ?? [], logs, commands }
+  const outbound = (_$: any, e: any) => {
+    sent.push(e)
+    return { result: 'ok' }
+  }
+  on('tool.call', { tool: ['WebFetch', 'WebSearch', 'Agent', 'SendMessage', 'SendFile', 'Artifact', 'ArtifactData', 'ArtifactComments', 'PushNotification', 'SendFeedback', 'RemoteTrigger'] }, outbound)
+  on('tool.call', { tool: /^mcp__/ }, outbound)
+  return { findings: () => written.findings ?? [], allowOnce: () => written.allowOnce ?? [], logs, commands, sent }
 }
 
 export const isDenied = (r: any): boolean => typeof r?.deny === 'string'
@@ -163,6 +173,10 @@ export function storeKV(on: any, initial: Record<string, unknown> = {}): Record<
   on('store.get', (_$: any, e: any) => ({ value: data[e.key] }))
   on('store.set', (_$: any, e: any) => {
     data[e.key] = e.value
+    return { value: undefined }
+  })
+  on('store.delete', (_$: any, e: any) => {
+    delete data[e.key]
     return { value: undefined }
   })
   return data

@@ -17,16 +17,17 @@ import { analyzeCommand } from './commands.ts'
 import { EMPTY_CONFIG, matchesAny, parseConfig, toRule } from './config.ts'
 import type { CommandFacts, GitOp } from './commands.ts'
 import { classifyPath, scanEdit, scanText, scanWrite } from './detect.ts'
-import type { Rule, ScanResult } from './detect.ts'
+import type { Finding, Rule, ScanResult } from './detect.ts'
 import { scanDiff } from './diff.ts'
 import type { DiffFinding } from './diff.ts'
 import { describe, fingerprint } from './mask.ts'
 import type { MaskedFinding } from './mask.ts'
 import * as say from './messages.ts'
 import type { WriteTool } from './messages.ts'
+import { MAX_READ, collect, isLikelyBinary, toolLabel } from './outbound.ts'
 import { decide, decideAll } from './policy.ts'
 import type { Action, Destination, Mode } from './policy.ts'
-import { USAGE, bannerLine, fit, historyRows, parseArgs, resolveIds, summaryText } from './ui.ts'
+import { USAGE, allowedText, bannerLine, fit, historyRows, mergeAllowed, parseArgs, resolveIds, summaryText } from './ui.ts'
 
 const { USE_ENV, ALLOW_ONCE, CANCEL, SHOW_NAMES, ADD_GITIGNORE } = say
 
@@ -40,6 +41,9 @@ const allowOnceRef = { plugin: 'leakstop', key: 'allowOnce' } as const
 const pausedRef = { plugin: 'leakstop', key: 'paused' } as const
 const bannerRef = { plugin: 'leakstop', key: 'banner' } as const
 const configRef = { plugin: 'leakstop', key: 'config' } as const
+
+/** The senders of a prompt that are not the user at the keyboard. */
+const AUTOMATED: ReadonlySet<string> = new Set(['task-notification', 'scheduled-trigger', 'peer', 'peer-send-message', 'projects-relay', 'channel', 'coordinator', 'observer', 'observer-activity', 'slack-ping', 'plugin'])
 
 const PANE = 'leakstop'
 const MAX_BANNER = 5
@@ -139,8 +143,8 @@ async function rememberAllowOnce($: EngineInterface, fingerprints: readonly stri
   await $.state.set(allowOnceRef, [...new Set([...value, ...fingerprints])].slice(-MAX_ALLOW_ONCE))
 }
 
-/** Reads the project's `.leakstop.json` once, at session start. A missing file is not a problem; a bad one is reported and the defaults apply. */
-async function loadConfig($: EngineInterface): Promise<void> {
+/** Reads the project's `.leakstop.json` (at session start and on `/leakstop reload`). A missing file is not a problem; a bad one is reported and the defaults apply. */
+async function loadConfig($: EngineInterface): Promise<StoredConfig> {
   let config: StoredConfig = EMPTY_CONFIG
   let exists = false
   try {
@@ -157,7 +161,7 @@ async function loadConfig($: EngineInterface): Promise<void> {
     }
   }
   await $.state.set(configRef, config)
-  for (const warning of config.warnings.slice(0, 5)) $.ui.log(`LeakStop: .leakstop.json: ${warning}`)
+  return config
 }
 
 async function getConfig($: EngineInterface): Promise<StoredConfig> {
@@ -171,23 +175,53 @@ const customRules = (config: StoredConfig): Rule[] => config.customRules.map(toR
 /** Medium findings in a path the project told us to ignore are dropped; critical ones never are. */
 const isRelaxed = (config: StoredConfig, severity: string, path: string): boolean => severity === 'medium' && matchesAny(path, config.ignorePaths)
 
-/** Fingerprints allowed for this session, the ones the user allowed for good and the ones the project allows. */
-async function allowedFingerprints($: EngineInterface, config: StoredConfig): Promise<Set<string>> {
-  const { value: once = [] } = await $.state.get(allowOnceRef)
+/** What is allowed, by where it came from: this session, the user for good (the machine-wide store) and the project. */
+async function allowedSources($: EngineInterface, config: StoredConfig): Promise<{ session: string[]; forever: string[]; project: string[] }> {
+  const { value: session = [] } = await $.state.get(allowOnceRef)
   let stored: unknown
   try {
     stored = await $.store.get('allowFingerprints')
   } catch {
     stored = undefined
   }
-  const permanent = Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : []
-  return new Set([...once, ...permanent, ...config.allowFingerprints])
+  const forever = Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : []
+  return { session, forever, project: config.allowFingerprints }
+}
+
+/** Fingerprints allowed for this session, the ones the user allowed for good and the ones the project allows. */
+async function allowedFingerprints($: EngineInterface, config: StoredConfig): Promise<Set<string>> {
+  const { session, forever, project } = await allowedSources($, config)
+  return new Set([...session, ...forever, ...project])
+}
+
+/** Stops allowing `fingerprints` (every one of the user's when `undefined`); the project's own list is not touched. Returns what was removed. */
+async function forgetAllowed($: EngineInterface, fingerprints: readonly string[] | undefined): Promise<{ session: string[]; forever: string[] }> {
+  const { session, forever } = await allowedSources($, EMPTY_CONFIG)
+  const drop = (list: readonly string[]): string[] => (fingerprints === undefined ? [...list] : list.filter((f) => fingerprints.includes(f)))
+  const removed = { session: drop(session), forever: drop(forever) }
+  if (removed.session.length > 0) await $.state.set(allowOnceRef, session.filter((f) => !removed.session.includes(f)))
+  if (removed.forever.length > 0) {
+    const kept = forever.filter((f) => !removed.forever.includes(f))
+    if (kept.length > 0) await $.store.set('allowFingerprints', kept)
+    else await $.store.delete('allowFingerprints')
+  }
+  return removed
+}
+
+/** True when VS Code is the only place the session draws: its dialog runs the lines of a question together. */
+async function isVsCodeOnly($: EngineInterface): Promise<boolean> {
+  try {
+    const surfaces = await $.session.surfaces()
+    return surfaces.includes('vscode') && !surfaces.some((surface) => surface === 'terminal' || surface === 'desktop')
+  } catch {
+    return false
+  }
 }
 
 /** The user's answer, or `undefined` when nobody could answer (dismissed, `claude -p`, no interface). */
 async function askUser($: EngineInterface, question: string, options: readonly string[]): Promise<string | undefined> {
   try {
-    return await $.ui.ask(question, { options, header: 'LeakStop' })
+    return await $.ui.ask((await isVsCodeOnly($)) ? say.flatten(question) : question, { options, header: 'LeakStop' })
   } catch {
     return undefined
   }
@@ -524,6 +558,94 @@ async function checkGit($: EngineInterface, op: GitOp, mode: Mode, allowed: Read
   return checkPublish($, 'push', await pendingForPush($, op, config), mode, allowed, config)
 }
 
+// --- Outbound tools ------------------------------------------------------------
+
+/** Secrets in what a tool sends away: the web, another agent or session, a published page, an MCP server. */
+async function guardOutbound($: EngineInterface, e: ToolCallInput, mode: Mode): Promise<Verdict> {
+  const { value: paused = false } = await $.state.get(pausedRef)
+  if (paused) return undefined
+
+  const tool = e.tool
+  const label = toolLabel(tool)
+  const config = await getConfig($)
+  const allowed = await allowedFingerprints($, config)
+  const rules = customRules(config)
+  const out = collect(e as unknown as Record<string, unknown>)
+  if (out.isTruncated) $.ui.log(`LeakStop: ${label} carries more than LeakStop reads, so only part of it was scanned`)
+  const cwd = await sessionCwd($)
+
+  // An argument's name comes from the model and can itself be a secret: never show one that matches a rule.
+  const place = (field: string): string => (scanText(field, { extraRules: rules }).findings.length > 0 ? '[argument]' : field)
+
+  const found: (Finding & { path: string })[] = []
+  for (const part of out.texts) {
+    const where = place(part.field)
+    const scan = scanText(part.text, { extraRules: rules })
+    if (scan.isSkipped) $.ui.log(`LeakStop: ${label} ${where} is larger than 4 MiB and was not scanned`)
+    if (scan.isPartial) $.ui.log(`LeakStop: the custom rules were too slow and did not cover ${label} ${where}`)
+    // The place is the argument, not a line: it is not a file.
+    for (const finding of scan.findings) found.push({ ...finding, line: 0, path: `${label} › ${where}` })
+  }
+
+  // Files the call sends: sensitive ones are held as they are, the rest are read and scanned.
+  const sensitive: string[] = []
+  let opened = 0
+  for (const file of out.files) {
+    if (await isSensitiveFile($, file)) {
+      sensitive.push(file)
+      continue
+    }
+    if (isLikelyBinary(file)) continue
+    // Past the limit a file is still checked by its name, just not opened.
+    if (opened >= MAX_READ) {
+      if (opened++ === MAX_READ) $.ui.log(`LeakStop: ${label} sends more than ${MAX_READ} files, so only the first ${MAX_READ} were read`)
+      continue
+    }
+    opened++
+    try {
+      const content = await $.fs.read(file)
+      if (typeof content !== 'string') continue
+      const shown = displayPathOf(file, cwd)
+      const scan = scanText(content, { path: file, extraRules: rules })
+      if (scan.isSkipped) $.ui.log(`LeakStop: ${shown} is larger than 4 MiB and was not scanned`)
+      for (const finding of scan.findings) found.push({ ...finding, path: shown })
+    } catch {
+      // Unreadable or over 4 MiB: it cannot be checked, and the tool will say if it cannot read it either.
+    }
+  }
+
+  const fileNotes = await Promise.all(sensitive.map((file) => operation('sensitive-file-send', 'Sensitive file sent', `path:${file}`)))
+  const pendingFiles = sensitive.filter((_, i) => !allowed.has((fileNotes[i] as Note).fingerprint)).map((file) => displayPathOf(file, cwd))
+  if (pendingFiles.length > 0) {
+    const verdict = await settle($, {
+      action: decide('sensitive-dump', 'critical', mode),
+      tool,
+      path: pendingFiles.join(', '),
+      notes: fileNotes.filter((n) => !allowed.has(n.fingerprint)),
+      question: say.outboundFileQuestion(tool, pendingFiles),
+      options: [ALLOW_ONCE, CANCEL],
+      deny: say.outboundFileDeny(tool, pendingFiles),
+      warn: [say.noticeLine(`${label} would send ${pendingFiles.join(', ')}`, mode === 'monitor')],
+    })
+    if (verdict !== undefined && 'deny' in verdict) return verdict
+  }
+
+  if (found.length === 0) return undefined
+  const described = await Promise.all(found.map(async (f) => ({ ...(await describe(f)), path: f.path })))
+  const masked = described.filter((f) => !allowed.has(f.fingerprint) && !isRelaxed(config, f.severity, f.path))
+  if (masked.length === 0) return undefined
+  return settle($, {
+    action: decideAll('outbound', masked.map((f) => f.severity), mode),
+    tool,
+    path: '',
+    notes: masked,
+    question: say.outboundQuestion(tool, masked),
+    options: [ALLOW_ONCE, CANCEL],
+    deny: say.outboundDeny(tool, masked),
+    warn: masked.map((f) => say.noticeLine(`${f.severity.toUpperCase()} · ${f.label} in ${f.path}`, mode === 'monitor')),
+  })
+}
+
 // --- Pure helpers of this file (no `$`) -------------------------------------
 
 type Call = { tool: WriteTool; path: string; result: ScanResult; oldString?: string }
@@ -561,13 +683,17 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'leakstop', description: 'Show LeakStop findings, pause or resume protection, or allow a finding' })
-    await loadConfig($)
+    const config = await loadConfig($)
+    for (const warning of config.warnings.slice(0, 5)) $.ui.log(`LeakStop: .leakstop.json: ${warning}`)
     return next(e)
   })
 
-  // A warning stays above the prompt until the user's next message.
+  // A warning stays above the prompt until the user's next message. A background agent finishing, a peer
+  // session, a schedule or another plugin also submit prompts: they are not the user reading the warning.
+  // The desktop app and VS Code may stamp the user's own message as `sdk` or `unclassified`, so what clears it
+  // is anything that is not one of those automated senders.
   on('prompt.submit', async ($, e, next) => {
-    await clearBanner($)
+    if (!AUTOMATED.has(e.origin?.kind ?? '')) await clearBanner($)
     return next(e)
   })
 
@@ -590,6 +716,10 @@ export const register: Register = (on, options) => {
       return isShown ? {} : { text: summaryText(findings, paused, config.warnings) }
     }
     if (args.kind === 'usage') return { text: USAGE }
+    if (args.kind === 'allowed') {
+      const { session, forever, project } = await allowedSources($, config)
+      return { text: allowedText(mergeAllowed(session, forever, project), findings) }
+    }
 
     // Changing what LeakStop checks is the user's call. A command that did not
     // come from the person (a task, a peer session, another plugin) is refused.
@@ -603,6 +733,25 @@ export const register: Register = (on, options) => {
     if (args.kind === 'resume') {
       await setPaused($, false)
       return { text: 'LeakStop resumed.' }
+    }
+    if (args.kind === 'reload') {
+      const reloaded = await loadConfig($)
+      const parts = [`${reloaded.customRules.length} custom rule${reloaded.customRules.length === 1 ? '' : 's'}`, `${reloaded.ignorePaths.length} ignored path${reloaded.ignorePaths.length === 1 ? '' : 's'}`, `${reloaded.allowFingerprints.length} allowed fingerprint${reloaded.allowFingerprints.length === 1 ? '' : 's'}`]
+      const notes = reloaded.warnings.slice(0, 5).map((warning) => `.leakstop.json: ${warning}`)
+      return { text: [`LeakStop reloaded .leakstop.json: ${parts.join(', ')}.`, ...notes].join('\n') }
+    }
+    if (args.kind === 'forget') {
+      const isAll = args.ids.length === 1 && args.ids[0]?.toLowerCase() === 'all'
+      const { fingerprints, unknown } = isAll ? { fingerprints: undefined, unknown: [] as string[] } : resolveIds(args.ids, findings)
+      const removed = await forgetAllowed($, fingerprints)
+      const count = new Set([...removed.session, ...removed.forever]).size
+      const kept = (fingerprints ?? config.allowFingerprints).filter((f) => config.allowFingerprints.includes(f))
+      const done = count > 0 ? `Stopped allowing ${count} finding${count === 1 ? '' : 's'}: ${[...new Set([...removed.session, ...removed.forever])].join(' ')}.` : 'Nothing of yours was allowed, so nothing changed.'
+      const notes = [
+        ...(kept.length > 0 ? [`Still allowed by .leakstop.json (edit that file to remove): ${kept.join(' ')}.`] : []),
+        ...(unknown.length > 0 ? [`Not recognised: ${unknown.join(', ')}.`] : []),
+      ]
+      return { text: [done, ...notes, ...(unknown.length > 0 ? [USAGE] : [])].join('\n') }
     }
     const { fingerprints, unknown } = resolveIds(args.ids, findings)
     if (fingerprints.length > 0) await allowForever($, fingerprints)
@@ -760,6 +909,17 @@ export const register: Register = (on, options) => {
       deny: say.readDeny(shownPath, mode === 'strict'),
       warn: [say.noticeLine(`${shownPath} is a sensitive file`, mode === 'monitor')],
     })
+    return verdict === undefined ? next(e) : { deny: (verdict as { deny: string }).deny }
+  }).catch(($, e, next) => onFailure(mode, next) ?? next(e))
+
+  // What leaves the session through a tool: a secret there cannot be taken back.
+  on('tool.call', { tool: ['WebFetch', 'WebSearch', 'Agent', 'SendMessage', 'SendFile', 'Artifact', 'ArtifactData', 'ArtifactComments', 'PushNotification', 'SendFeedback', 'RemoteTrigger'] }, async ($, e, next) => {
+    const verdict = await guardOutbound($, e, mode)
+    return verdict === undefined ? next(e) : { deny: (verdict as { deny: string }).deny }
+  }).catch(($, e, next) => onFailure(mode, next) ?? next(e))
+
+  on('tool.call', { tool: /^mcp__/ }, async ($, e, next) => {
+    const verdict = await guardOutbound($, e, mode)
     return verdict === undefined ? next(e) : { deny: (verdict as { deny: string }).deny }
   }).catch(($, e, next) => onFailure(mode, next) ?? next(e))
 }
