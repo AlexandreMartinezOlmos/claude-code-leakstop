@@ -24,7 +24,7 @@ import { describe, fingerprint } from './mask.ts'
 import type { MaskedFinding } from './mask.ts'
 import * as say from './messages.ts'
 import type { WriteTool } from './messages.ts'
-import { collect, toolLabel } from './outbound.ts'
+import { MAX_READ, collect, isLikelyBinary, toolLabel } from './outbound.ts'
 import { decide, decideAll } from './policy.ts'
 import type { Action, Destination, Mode } from './policy.ts'
 import { USAGE, allowedText, bannerLine, fit, historyRows, mergeAllowed, parseArgs, resolveIds, summaryText } from './ui.ts'
@@ -41,6 +41,9 @@ const allowOnceRef = { plugin: 'leakstop', key: 'allowOnce' } as const
 const pausedRef = { plugin: 'leakstop', key: 'paused' } as const
 const bannerRef = { plugin: 'leakstop', key: 'banner' } as const
 const configRef = { plugin: 'leakstop', key: 'config' } as const
+
+/** The senders of a prompt that are not the user at the keyboard. */
+const AUTOMATED: ReadonlySet<string> = new Set(['task-notification', 'scheduled-trigger', 'peer', 'peer-send-message', 'projects-relay', 'channel', 'coordinator', 'observer', 'observer-activity', 'slack-ping', 'plugin'])
 
 const PANE = 'leakstop'
 const MAX_BANNER = 5
@@ -569,36 +572,50 @@ async function guardOutbound($: EngineInterface, e: ToolCallInput, mode: Mode): 
   const rules = customRules(config)
   const out = collect(e as unknown as Record<string, unknown>)
   if (out.isTruncated) $.ui.log(`LeakStop: ${label} carries more than LeakStop reads, so only part of it was scanned`)
+  const cwd = await sessionCwd($)
+
+  // An argument's name comes from the model and can itself be a secret: never show one that matches a rule.
+  const place = (field: string): string => (scanText(field, { extraRules: rules }).findings.length > 0 ? '[argument]' : field)
 
   const found: (Finding & { path: string })[] = []
   for (const part of out.texts) {
+    const where = place(part.field)
     const scan = scanText(part.text, { extraRules: rules })
-    if (scan.isSkipped) $.ui.log(`LeakStop: ${label} ${part.field} is larger than 4 MiB and was not scanned`)
-    if (scan.isPartial) $.ui.log(`LeakStop: the custom rules were too slow and did not cover ${label} ${part.field}`)
+    if (scan.isSkipped) $.ui.log(`LeakStop: ${label} ${where} is larger than 4 MiB and was not scanned`)
+    if (scan.isPartial) $.ui.log(`LeakStop: the custom rules were too slow and did not cover ${label} ${where}`)
     // The place is the argument, not a line: it is not a file.
-    for (const finding of scan.findings) found.push({ ...finding, line: 0, path: `${label} › ${part.field}` })
+    for (const finding of scan.findings) found.push({ ...finding, line: 0, path: `${label} › ${where}` })
   }
 
   // Files the call sends: sensitive ones are held as they are, the rest are read and scanned.
   const sensitive: string[] = []
+  let opened = 0
   for (const file of out.files) {
     if (await isSensitiveFile($, file)) {
       sensitive.push(file)
       continue
     }
+    if (isLikelyBinary(file)) continue
+    // Past the limit a file is still checked by its name, just not opened.
+    if (opened >= MAX_READ) {
+      if (opened++ === MAX_READ) $.ui.log(`LeakStop: ${label} sends more than ${MAX_READ} files, so only the first ${MAX_READ} were read`)
+      continue
+    }
+    opened++
     try {
       const content = await $.fs.read(file)
       if (typeof content !== 'string') continue
+      const shown = displayPathOf(file, cwd)
       const scan = scanText(content, { path: file, extraRules: rules })
-      if (scan.isSkipped) $.ui.log(`LeakStop: ${file} is larger than 4 MiB and was not scanned`)
-      for (const finding of scan.findings) found.push({ ...finding, path: file })
+      if (scan.isSkipped) $.ui.log(`LeakStop: ${shown} is larger than 4 MiB and was not scanned`)
+      for (const finding of scan.findings) found.push({ ...finding, path: shown })
     } catch {
       // Unreadable or over 4 MiB: it cannot be checked, and the tool will say if it cannot read it either.
     }
   }
 
   const fileNotes = await Promise.all(sensitive.map((file) => operation('sensitive-file-send', 'Sensitive file sent', `path:${file}`)))
-  const pendingFiles = sensitive.filter((_, i) => !allowed.has((fileNotes[i] as Note).fingerprint))
+  const pendingFiles = sensitive.filter((_, i) => !allowed.has((fileNotes[i] as Note).fingerprint)).map((file) => displayPathOf(file, cwd))
   if (pendingFiles.length > 0) {
     const verdict = await settle($, {
       action: decide('sensitive-dump', 'critical', mode),
@@ -672,9 +689,11 @@ export const register: Register = (on, options) => {
   })
 
   // A warning stays above the prompt until the user's next message. A background agent finishing, a peer
-  // session or a schedule also submit prompts: they are not the user reading the warning.
+  // session, a schedule or another plugin also submit prompts: they are not the user reading the warning.
+  // The desktop app and VS Code may stamp the user's own message as `sdk` or `unclassified`, so what clears it
+  // is anything that is not one of those automated senders.
   on('prompt.submit', async ($, e, next) => {
-    if (e.origin?.kind === 'composer' || e.origin?.kind === 'bridge') await clearBanner($)
+    if (!AUTOMATED.has(e.origin?.kind ?? '')) await clearBanner($)
     return next(e)
   })
 

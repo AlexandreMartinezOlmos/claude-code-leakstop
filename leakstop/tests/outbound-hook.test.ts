@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { REJECT, USER, answerWith, disk, isDenied, ran, storeAllows, toolsRun } from './harness.ts'
+import { CWD, REJECT, USER, answerWith, disk, isDenied, ran, storeAllows, toolsRun } from './harness.ts'
 import { scanText } from '../hooks/detect.ts'
 import { fingerprint } from '../hooks/mask.ts'
 import { PROVIDER_TOKENS, fakeJwt, random } from './secrets.ts'
@@ -242,4 +242,94 @@ test('an internal failure lets the call through in monitor mode', { options: { m
   toolsRun(on, { noClock: true })
   answerWith(on, CANCEL)
   expect(ran(await call($, CALLS.Agent?.(token()) ?? {}))).toBe(true)
+})
+
+// --- What the review found ----------------------------------------------------------------
+
+test('a secret used as an argument name is found and never shown', async ($, on) => {
+  const env = toolsRun(on)
+  const asked = answerWith(on, CANCEL)
+  const key = token()
+  const other = PROVIDER_TOKENS['github-token']?.() ?? ''
+  const r = await call($, { tool: 'mcp__srv__set', map: { [key]: `value ${other}` } })
+  expect(isDenied(r)).toBe(true)
+  const everything = JSON.stringify([r, asked.questions, env.findings(), env.logs])
+  for (const secret of [key, other]) {
+    expect(everything.includes(secret)).toBe(false)
+    expect(everything.includes(secret.slice(12, 32))).toBe(false)
+  }
+  // Both the key and the value are findings; the place of the value does not name the key.
+  expect(r.deny.includes('Anthropic API key (sk-ant-…)')).toBe(true)
+  expect(r.deny.includes('GitHub token')).toBe(true)
+  expect(env.findings().some((f: any) => f.path.includes('[argument]'))).toBe(true)
+})
+
+test('a secret that is only an argument name is found', async ($, on) => {
+  toolsRun(on)
+  answerWith(on, CANCEL)
+  expect(isDenied(await call($, { tool: 'mcp__srv__set', map: { [token()]: 'x' } }))).toBe(true)
+})
+
+test('a secret after 200 harmless texts is still found', async ($, on) => {
+  toolsRun(on)
+  answerWith(on, CANCEL)
+  const items = [...Array.from({ length: 205 }, (_, i) => `harmless ${i}`), `key ${token()}`]
+  const r = await call($, { tool: 'mcp__srv__bulk', items })
+  expect(isDenied(r)).toBe(true)
+  expect(r.deny.includes('(further arguments)')).toBe(true)
+})
+
+test('a secret nested deeper than the depth limit is still found', async ($, on) => {
+  toolsRun(on)
+  answerWith(on, CANCEL)
+  const nested = { a: { b: { c: { d: { e: { f: { g: { h: `key ${token()}` } } } } } } } }
+  expect(isDenied(await call($, { tool: 'mcp__srv__deep', ...nested }))).toBe(true)
+})
+
+test('a sensitive file named after the twentieth is still held', async ($, on) => {
+  const env = toolsRun(on)
+  answerWith(on, CANCEL)
+  const files = [...Array.from({ length: 25 }, (_, i) => `f${i}.txt`), '.env']
+  disk(on, {})
+  const r = await call($, { tool: 'SendFile', to: 'peer', files })
+  expect(isDenied(r)).toBe(true)
+  expect(r.deny.includes('.env hold secrets')).toBe(true)
+  expect(env.sent).toEqual([])
+})
+
+test('only the first twenty files are opened, and it is said', async ($, on) => {
+  const env = toolsRun(on)
+  answerWith(on, CANCEL)
+  const reads: string[] = []
+  on('fs.read', (_$: any, e: any) => {
+    reads.push(e.path)
+    return { value: 'clean' }
+  })
+  const files = Array.from({ length: 30 }, (_, i) => `f${i}.txt`)
+  expect(ran(await call($, { tool: 'SendFile', to: 'peer', files }))).toBe(true)
+  expect(reads.length).toBe(20)
+  expect(env.logs.some((l) => l.includes('only the first 20 were read'))).toBe(true)
+})
+
+test('images and other binaries are not opened, but a sensitive binary is still held', async ($, on) => {
+  toolsRun(on)
+  answerWith(on, CANCEL)
+  const reads: string[] = []
+  on('fs.read', (_$: any, e: any) => {
+    reads.push(e.path)
+    return { value: 'clean' }
+  })
+  expect(ran(await call($, { tool: 'Artifact', action: 'publish', file_path: 'page.html', file_paths: ['logo.png', 'font.woff2'] }))).toBe(true)
+  expect(reads.map((path) => path.split('/').pop())).toEqual(['page.html'])
+  expect(isDenied(await call($, { tool: 'SendFile', to: 'peer', files: ['certs/store.p12'] }))).toBe(true)
+})
+
+test('a finding in a file is reported by its path inside the project', async ($, on) => {
+  const env = toolsRun(on)
+  answerWith(on, CANCEL)
+  disk(on, { [`${CWD}/src/config.ts`]: `export const apiKey = "${token()}"\n` })
+  const r = await call($, { tool: 'SendFile', to: 'peer', files: [`${CWD}/src/config.ts`] })
+  expect(r.deny.includes('src/config.ts contains an Anthropic API key')).toBe(true)
+  expect(r.deny.includes(CWD)).toBe(false)
+  expect(env.findings()[0]).toMatchObject({ path: 'src/config.ts', line: 1 })
 })
