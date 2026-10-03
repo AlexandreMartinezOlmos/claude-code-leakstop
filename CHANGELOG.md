@@ -8,6 +8,7 @@
 - `sed -i` and `tee … > /dev/null` that write a secret into a file git ignores (such as `.env`) now pass, like `echo >> .env` already did.
 - `/leakstop` no longer leaves a stray empty line in the transcript when it opens the panel, and in the VS Code chat panel (where nothing can be drawn) it now prints the history as text instead of nothing.
 - A weaker finding that only warns is now labelled `warned` in the panel and the banner, not `allowed`.
+- Text inside a quoted heredoc (`<<'EOF'`), such as a note that mentions `$(…)` or backticks, is no longer read as a command substitution; an unquoted heredoc, which the shell does expand, still is.
 - `printf "$KEY" > file` (and `echo`) no longer counts as printing the variable: its output goes to the file. Reading that file back in the same command still does.
 
 ## 0.1.0

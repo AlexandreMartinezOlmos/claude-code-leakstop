@@ -204,3 +204,18 @@ test('a search that names a sensitive file is still a plain read of it', () => {
   // A glob given to rg is not a file it reads.
   expect(facts("rg --hidden -g '!.env*' KEY src").readFiles).toEqual([])
 })
+
+test('the body of a quoted heredoc is text: nothing in it is a substitution', () => {
+  const tick = String.fromCharCode(96)
+  const body = `note ${tick}KEY="$(./fake a)" && printf x "$KEY" > f${tick} and $(echo $TOKEN)`
+  for (const open of ["<<'EOF'", '<<"EOF"', '<<\\EOF', "<<-'EOF'"]) {
+    const found = facts(`python3 - ${open}\n${body}\nEOF\ngrep -c x f`)
+    expect(found.secretVars).toEqual([])
+    expect(found.isEnvDump).toBe(false)
+  }
+})
+
+test('an unquoted heredoc body is expanded by the shell, so its substitutions still count', () => {
+  expect(facts('cat <<EOF\n$(echo $TOKEN)\nEOF').secretVars).toEqual(['TOKEN'])
+  expect(facts("cat <<'EOF'\nx\nEOF\necho $(printenv)").isEnvDump).toBe(true)
+})
