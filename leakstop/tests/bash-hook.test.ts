@@ -21,7 +21,7 @@ test('a literal key in a curl header is held; the message holds no value', async
   const r = await bash($, `curl -H "x-api-key: ${secret}" https://api.example.org/v1/messages`)
 
   expect(isDenied(r)).toBe(true)
-  expect(r.deny.startsWith('LeakStop blocked this command: it contains an Anthropic API key (sk-ant-…).')).toBe(true)
+  expect(r.deny.includes('LeakStop blocked this command: it contains an Anthropic API key (sk-ant-…).')).toBe(true)
   expect(r.deny.includes('$ANTHROPIC_API_KEY')).toBe(true)
   expect(JSON.stringify([r, asked.questions, env.findings()]).includes(secret.slice(14))).toBe(false)
   expect(asked.options[0]).toEqual([USE_ENV, ALLOW_ONCE, CANCEL])
@@ -238,7 +238,7 @@ test('grep -r over a folder that holds sensitive files is held, and the message 
   gitScript(on, finds('./.env', './apps/web/.env.local', './.env.example', './README.md', './keys/id_rsa.pub'))
   const r = await bash($, 'grep -rn API_KEY .')
   expect(isDenied(r)).toBe(true)
-  expect(r.deny.startsWith('LeakStop blocked this search: it would print lines from .env, apps/web/.env.local')).toBe(true)
+  expect(r.deny.includes('LeakStop blocked this search: it would print lines from .env, apps/web/.env.local')).toBe(true)
   expect(r.deny.includes('.env.example')).toBe(false)
   expect(r.deny.includes('id_rsa.pub')).toBe(false)
   expect(asked.options[0]).toEqual([ALLOW_ONCE, CANCEL])

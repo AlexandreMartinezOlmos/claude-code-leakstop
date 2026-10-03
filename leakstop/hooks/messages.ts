@@ -7,6 +7,37 @@
 import { classifyPath } from './detect.ts'
 import type { MaskedFinding } from './mask.ts'
 
+/** The labels of the options in the dialogs. */
+export const USE_ENV = 'Use environment variable'
+export const ALLOW_ONCE = 'Allow once'
+export const CANCEL = 'Cancel'
+export const SHOW_NAMES = 'Show names only'
+export const ADD_GITIGNORE = 'Add to .gitignore'
+
+const MAX_FREE_TEXT = 200
+
+/**
+ * What the model reads before a denial: who decided, so it neither retries after a cancel nor asks the user
+ * again after a choice that already told it what to do. `answer` is `undefined` when nobody could answer.
+ */
+export function answerNote(answer: string | undefined): string {
+  switch (answer) {
+    case undefined:
+      return 'LeakStop could not ask the user, so the action was denied.'
+    case CANCEL:
+      return 'The user chose Cancel: do not retry this action or work around it. Ask them how they want to proceed.'
+    case USE_ENV:
+      return 'The user chose "Use environment variable": do that now instead of writing the value.'
+    case ADD_GITIGNORE:
+      return 'The user chose "Add to .gitignore": add those files to .gitignore now, then retry.'
+    default: {
+      const text = answer.replace(/\s+/g, ' ').trim()
+      const shown = text.length > MAX_FREE_TEXT ? `${text.slice(0, MAX_FREE_TEXT)}…` : text
+      return `The user picked no option and answered: "${shown}". That is not an approval of the original action; follow what they said, and ask them if it is unclear.`
+    }
+  }
+}
+
 /** The tools whose write is checked. */
 export type WriteTool = 'Write' | 'Edit' | 'NotebookEdit'
 
@@ -147,7 +178,7 @@ export function dumpQuestion(subject: string, items: readonly string[]): string 
 }
 
 export function fileReadDeny(files: readonly string[]): string {
-  return `LeakStop blocked this command: it would print ${list(files)} into the conversation, where the values would stay in the model's context and the session history. Do not read the file. To see which variables exist, read .env.example or ask the user.`
+  return `LeakStop blocked this command: it would print ${list(files)} into the conversation, where the values would stay in the model's context and the session history. Do not read the file. To see which variables exist, read .env.example or ask the user. To add a variable without reading the file, append it: echo 'NAME=value' >> .env`
 }
 
 export const ENV_DUMP_DENY =
@@ -191,7 +222,7 @@ export function readQuestion(path: string): string {
 
 export function readDeny(path: string, isStrict: boolean): string {
   const never = isStrict ? ' Strict mode never allows reading sensitive files.' : ''
-  return `LeakStop blocked reading ${path}: it holds secrets that would enter the conversation.${never} Do not read it; read .env.example for variable names or ask the user.`
+  return `LeakStop blocked reading ${path}: it holds secrets that would enter the conversation.${never} Do not read it; read .env.example for variable names or ask the user. To add a variable without reading the file, append it: echo 'NAME=value' >> .env`
 }
 
 /** The transcript line for something that warns instead of holding. */

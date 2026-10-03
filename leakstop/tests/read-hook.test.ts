@@ -12,7 +12,7 @@ test('reading a sensitive file is held: Cancel denies, Allow once reads', async 
   const asked = answerWith(on, CANCEL)
   const r = await read($, '/work/app/.env')
   expect(isDenied(r)).toBe(true)
-  expect(r.deny.startsWith('LeakStop blocked reading .env')).toBe(true)
+  expect(r.deny.includes('LeakStop blocked reading .env')).toBe(true)
   expect(asked.options[0]).toEqual([ALLOW_ONCE, CANCEL])
   expect(asked.questions[0]?.includes('  .env')).toBe(true)
 

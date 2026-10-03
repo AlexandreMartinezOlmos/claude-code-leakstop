@@ -112,7 +112,7 @@ test('a custom rule is held in a write, with its own name and no value', async (
   await start($)
   const r = await write($, 'src/client.ts', `const t = "${secret}"\n`)
   expect(isDenied(r)).toBe(true)
-  expect(r.deny.startsWith('LeakStop blocked this write: src/client.ts:1 contains an ACME token (acme_…).')).toBe(true)
+  expect(r.deny.includes('LeakStop blocked this write: src/client.ts:1 contains an ACME token (acme_…).')).toBe(true)
   expect(JSON.stringify([r, asked.questions]).includes(secret.slice(8))).toBe(false)
 })
 
