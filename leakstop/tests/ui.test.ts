@@ -33,7 +33,7 @@ test('says where it happened', () => {
 })
 
 test('the banner names severity, type, place and the command, in the spec’s shape', () => {
-  expect(bannerLine([finding()], false, 100)).toBe('△ LeakStop · MEDIUM · JSON Web Token in tests/fixtures/user.json:8 · allowed · /leakstop')
+  expect(bannerLine([finding()], false, 100)).toBe('△ LeakStop · MEDIUM · JSON Web Token in tests/fixtures/user.json:8 · warned · /leakstop')
   expect(bannerLine([finding({ severity: 'critical' })], false, 100).includes('CRITICAL')).toBe(true)
   expect(bannerLine([finding(), finding()], false, 120).includes('(+1 more)')).toBe(true)
   expect(bannerLine([], false, 100)).toBe('')

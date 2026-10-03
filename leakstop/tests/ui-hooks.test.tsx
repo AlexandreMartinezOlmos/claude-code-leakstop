@@ -43,8 +43,14 @@ test('session.start registers /leakstop', async ($, on) => {
 test('/leakstop opens the history pane, focused, and prints nothing', async ($, on) => {
   const { ui } = setup(on)
   const result = await slash($, '')
-  expect(result.text).toBe('')
+  expect(result.text).toBe(undefined)
   expect(ui.opened).toEqual([{ id: 'leakstop', title: 'LeakStop', focus: true }])
+})
+
+test('/leakstop prints the summary where nothing can be drawn, even if the pane reports being placed (VS Code)', async ($, on) => {
+  setup(on, { surfaces: ['vscode'], isPlaced: true })
+  const result = await slash($, '')
+  expect(result.text?.startsWith('LeakStop · no findings this session')).toBe(true)
 })
 
 test('/leakstop falls back to the same summary as text when the pane cannot be placed', async ($, on) => {
@@ -141,7 +147,7 @@ for (const surface of SURFACES) {
 
     const mounted = await band($, surface, { ...BAND_PROPS, bodyColumns: 100 })
     const line = await mounted.find({ type: 'Text', text: /LeakStop · MEDIUM/ })
-    expect(line?.text).toBe('△ LeakStop · MEDIUM · JSON Web Token in tests/fixtures/user.json:1 · allowed · /leakstop')
+    expect(line?.text).toBe('△ LeakStop · MEDIUM · JSON Web Token in tests/fixtures/user.json:1 · warned · /leakstop')
     expect(await mounted.find({ text: 'engine default band' })).toBe(undefined)
 
     await $.prompt.submit({ text: 'next message', origin: USER })
@@ -213,7 +219,7 @@ for (const surface of SURFACES) {
     expect(texts.some((t) => t.startsWith('#2') && t.includes('JSON Web Token'))).toBe(true)
     expect(texts.some((t) => t.startsWith('#1') && t.includes('CRITICAL') && t.includes('Anthropic API key · src/config.ts:1'))).toBe(true)
     expect(texts.some((t) => t.includes('→ denied'))).toBe(true)
-    expect(texts.some((t) => t.includes('→ allowed'))).toBe(true)
+    expect(texts.some((t) => t.includes('→ warned'))).toBe(true)
     expect(JSON.stringify(await mounted.drawn()).includes(secret.slice(14))).toBe(false)
 
     expect((await mounted.find({ type: 'Button', key: 'pause' }))?.props.label).toBe('Pause')
