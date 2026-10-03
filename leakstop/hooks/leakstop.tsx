@@ -585,7 +585,9 @@ export const register: Register = (on, options) => {
       } catch {
         isPlaced = false
       }
-      return isPlaced ? { text: '' } : { text: summaryText(findings, paused, config.warnings) }
+      // Where nothing is drawn (the VS Code panel) a "placed" panel is invisible: say it in text.
+      const isShown = isPlaced && (await drawsBanner($))
+      return isShown ? {} : { text: summaryText(findings, paused, config.warnings) }
     }
     if (args.kind === 'usage') return { text: USAGE }
 

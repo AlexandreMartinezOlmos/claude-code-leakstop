@@ -183,6 +183,12 @@ claude --plugin-dir ./leakstop      # loads the mod and reloads it when you save
 claude plugin validate ./leakstop --strict
 ```
 
+A mod loaded with `--plugin-dir` is not *installed*, so `/plugin configure` does not apply to it. Pass the mode for that session instead:
+
+```
+claude --plugin-dir ./leakstop --settings '{"pluginConfigs":{"leakstop":{"options":{"mode":"monitor"}}}}'
+```
+
 While developing, use `monitor` mode so LeakStop does not hold its own test files, and test in a throwaway project. Test secrets are generated at run time; no real-looking secret is ever committed to this repository.
 
 To see what the detector would flag in your own repositories (read-only; it prints rule, place, length and the line with the value hidden, never the value), run `node scripts/calibrate.ts <folder> [...]` with Node 24 or later.
