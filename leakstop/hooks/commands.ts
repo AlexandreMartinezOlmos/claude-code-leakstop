@@ -17,12 +17,20 @@ export type Segment = {
 
 /** Splits on `&&`, `||`, `;`, `&`, `|`, newlines and parentheses; skips heredoc bodies. */
 export function parseCommand(command: string): Segment[] {
+  return parseWithBodies(command).segments
+}
+
+/** `<<'EOF'` bodies are text, not shell: nothing in them is expanded or run. */
+type Span = { start: number; end: number }
+
+function parseWithBodies(command: string): { segments: Segment[]; literalBodies: Span[] } {
   const segments: Segment[] = []
+  const literalBodies: Span[] = []
   let words: string[] = []
   let word = ''
   let hasWord = false
   let pipeline = 0
-  let heredocs: { delimiter: string; isIndented: boolean }[] = []
+  let heredocs: { delimiter: string; isIndented: boolean; isLiteral: boolean }[] = []
 
   const endWord = (): void => {
     if (hasWord) words.push(word)
@@ -78,12 +86,14 @@ export function parseCommand(command: string): Segment[] {
       i++
       // Skip the bodies of heredocs opened on the line that just ended.
       for (const heredoc of heredocs) {
+        const start = i
         while (i < command.length) {
           const lineEnd = command.indexOf('\n', i)
           const line = command.slice(i, lineEnd < 0 ? command.length : lineEnd)
           i = lineEnd < 0 ? command.length : lineEnd + 1
           if ((heredoc.isIndented ? line.trim() : line) === heredoc.delimiter) break
         }
+        if (heredoc.isLiteral) literalBodies.push({ start, end: i })
       }
       heredocs = []
       continue
@@ -121,13 +131,14 @@ export function parseCommand(command: string): Segment[] {
       if (isIndented) j++
       while (command[j] === ' ') j++
       const quote = command[j] === "'" || command[j] === '"' ? command[j] : undefined
+      const isLiteral = quote !== undefined || command[j] === '\\'
       if (quote !== undefined) j++
       let delimiter = ''
       while (j < command.length && !/[\s;&|()<>'"]/.test(command[j] as string)) delimiter += command[j++]
       if (quote !== undefined && command[j] === quote) j++
       endWord()
       words.push('<<')
-      if (delimiter !== '') heredocs.push({ delimiter, isIndented })
+      if (delimiter !== '') heredocs.push({ delimiter, isIndented, isLiteral })
       i = j
       continue
     }
@@ -149,7 +160,7 @@ export function parseCommand(command: string): Segment[] {
     i++
   }
   endSegment(false)
-  return segments
+  return { segments, literalBodies }
 }
 
 // --- Programs --------------------------------------------------------------
@@ -157,7 +168,7 @@ export function parseCommand(command: string): Segment[] {
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
 const WRAPPERS = new Set(['sudo', 'command', 'time', 'nohup', 'exec', 'builtin', 'nice', 'env'])
 
-type Program = { name: string; args: string[]; isBareEnv: boolean }
+type Program = { name: string; args: string[]; isBareEnv: boolean; /** Invoked by its bare name, with no wrapper before it. */ isPlain: boolean }
 
 /** The program a segment runs, past assignments and wrappers (`sudo`, `env FOO=1`, `time`). */
 function programOf(words: readonly string[]): Program {
@@ -177,8 +188,17 @@ function programOf(words: readonly string[]): Program {
     }
   }
   const first = words[i]
-  if (first === undefined) return { name: '', args: [], isBareEnv: isEnv }
-  return { name: first.split('/').pop() ?? first, args: words.slice(i + 1), isBareEnv: false }
+  if (first === undefined) return { name: '', args: [], isBareEnv: isEnv, isPlain: false }
+  return { name: first.split('/').pop() ?? first, args: words.slice(i + 1), isBareEnv: false, isPlain: i === 0 && !first.includes('/') }
+}
+
+/** The files a segment sends its standard output to with `>` or `>>`. */
+function outputTargets(args: readonly string[]): string[] {
+  const targets: string[] = []
+  for (let i = 0; i < args.length; i++) {
+    if (/^>>?\|?$/.test(args[i] as string) && args[i + 1] !== undefined) targets.push(args[++i] as string)
+  }
+  return targets
 }
 
 const isFlag = (word: string): boolean => word.startsWith('-') && word.length > 1
@@ -220,6 +240,87 @@ function isSensitiveOperand(operand: string): boolean {
   return [operand.replace(/[*?]/g, ''), operand.replace(/[*?]/g, 'x'), operand.replace(/\*/g, '.x')].some((guess) => classifyPath(guess) !== undefined)
 }
 
+/** A recursive `grep` or `rg` that prints lines (not just file names or counts). */
+export type Search = {
+  /** Where it looks: the folders it was given, or `.` when it was given none. */
+  dirs: string[]
+  /** Patterns of files it is told to skip (`--exclude`, `--exclude-dir`, `-g '!…'`). */
+  excludes: string[]
+  /** Patterns of files it is limited to (`--include`, `-g`); empty when it looks at everything. */
+  includes: string[]
+  /**
+   * Files that git ignores are not searched. True for `rg` and `ag` unless told otherwise, and for the
+   * plain `grep` command, which Claude Code's shell replaces with a search that honours `.gitignore`.
+   */
+  respectsIgnore: boolean
+}
+
+const SEARCHERS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag'])
+/** Flags whose value is the next word. */
+const VALUE_FLAGS = new Set(['-e', '-f', '-m', '-A', '-B', '-C', '-d', '-D', '-g', '-t', '-T', '-j', '-M', '-E', '--include', '--exclude', '--exclude-dir', '--exclude-from', '--file', '--regexp', '--max-count', '--glob', '--iglob', '--type', '--type-not', '--threads', '--max-depth', '--context', '--before-context', '--after-context', '--directories', '--devices'])
+/** `rg` and `ag` skip hidden and ignored files unless told otherwise. */
+/** Flags that stop a search from honouring `.gitignore`. */
+const NO_IGNORE = /^(?:--no-ignore(?:-[a-z-]+)?|--unrestricted|-u+|-U)$/
+const REACHES_HIDDEN = /^(?:--hidden|-\.|--no-ignore(?:-[a-z-]+)?|--unrestricted|-u+|-U)$/
+/** Flags that make the output file names or counts, never lines. */
+const LIST_ONLY_LONG = /^--(?:files-with-matches|files-without-match|count|count-matches|quiet|silent|files)$/
+
+type SearchParse = {
+  /** The patterns and paths, with every flag and flag value removed. */
+  paths: string[]
+  /** File names or counts only: nothing here can print a line of a file. */
+  isListOnly: boolean
+  /** Set when the search is recursive and can reach files nobody named. */
+  search?: Search
+}
+
+function parseSearch(name: string, args: readonly string[], isPlain: boolean): SearchParse {
+  const isGrep = name === 'grep' || name === 'egrep' || name === 'fgrep'
+  let isRecursive = !isGrep // rg and ag always are
+  let reachesHidden = isGrep // grep reads dotfiles and ignored files
+  let isIgnoreOff = false
+  let isPatternGiven = false
+  let isListOnly = false
+  const words: string[] = []
+  const excludes: string[] = []
+  const includes: string[] = []
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] as string
+    if (/^>>?\|?$/.test(arg)) {
+      i++ // the target of an output redirection
+      continue
+    }
+    if (arg === '<' || arg === '<<') continue
+    if (!isFlag(arg)) {
+      words.push(arg)
+      continue
+    }
+    const [flag, inline] = arg.startsWith('--') && arg.includes('=') ? [arg.slice(0, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)] : [arg, undefined]
+    const value = inline ?? (VALUE_FLAGS.has(flag) ? args[++i] : undefined)
+
+    if (LIST_ONLY_LONG.test(flag)) isListOnly = true
+    if (/^-[A-Za-z]*[lLcq][A-Za-z]*$/.test(flag) && !flag.startsWith('--') && !VALUE_FLAGS.has(flag)) isListOnly = true
+    if (flag === '--recursive' || flag === '--dereference-recursive') isRecursive = true
+    else if (isGrep && !flag.startsWith('--') && /^-[A-Za-z]*[rR][A-Za-z]*$/.test(flag) && !VALUE_FLAGS.has(flag)) isRecursive = true
+    if (isGrep && (flag === '-d' || flag === '--directories') && value === 'recurse') isRecursive = true
+    if (!isGrep && REACHES_HIDDEN.test(flag)) reachesHidden = true
+    if (NO_IGNORE.test(flag)) isIgnoreOff = true
+    if (flag === '-e' || flag === '-f' || flag === '--regexp' || flag === '--file') isPatternGiven = true
+
+    if (value !== undefined) {
+      if (flag === '--exclude' || flag === '--exclude-from') excludes.push(value)
+      else if (flag === '--exclude-dir') excludes.push(`**/${value}/**`)
+      else if (flag === '--include') includes.push(value)
+      else if (flag === '-g' || flag === '--glob' || flag === '--iglob') (value.startsWith('!') ? excludes : includes).push(value.replace(/^!/, ''))
+    }
+  }
+  const paths = isPatternGiven ? words : words.slice(1)
+  if (isListOnly || !isRecursive || !reachesHidden) return { paths, isListOnly }
+  const respectsIgnore = !isIgnoreOff && (isGrep ? name === 'grep' && isPlain : true)
+  return { paths, isListOnly, search: { dirs: paths.length > 0 ? paths : ['.'], excludes, includes, respectsIgnore } }
+}
+
 export type GitOp =
   | { kind: 'add'; isAll: boolean; paths: string[]; dir?: string }
   | { kind: 'commit'; isAll: boolean; dir?: string; staging: { isAll: boolean; paths: string[] }[] }
@@ -237,6 +338,8 @@ export type CommandFacts = {
   touchesConfig: boolean
   /** The command that prints names only instead, when the command is simple enough to rewrite. */
   namesOnly?: string
+  /** Recursive searches that print matching lines and may reach files nobody named. */
+  searches: Search[]
   /**
    * Where the command writes, when it does nothing but write: one `echo`, `printf` or `cat`
    * redirected to files, with no pipe, no `&&` and no command substitution. A secret in
@@ -271,9 +374,17 @@ const BACKTICKS = new RegExp('\\x60([^\\x60]*)\\x60', 'g')
 
 /** Text of command substitutions (dollar-parenthesis and backticks), which can hide a command inside quotes. */
 function substitutions(command: string): string[] {
+  // The body of `<<'EOF'` is never expanded, so a `$(…)` or backticks in it are only text.
+  let text = ''
+  let at = 0
+  for (const { start, end } of parseWithBodies(command).literalBodies) {
+    text += command.slice(at, start)
+    at = end
+  }
+  text += command.slice(at)
   const out: string[] = []
-  for (const match of command.matchAll(/\$\(([^()]*)\)/g)) if (match[1] !== undefined) out.push(match[1])
-  for (const match of command.matchAll(BACKTICKS)) if (match[1] !== undefined) out.push(match[1])
+  for (const match of text.matchAll(/\$\(([^()]*)\)/g)) if (match[1] !== undefined) out.push(match[1])
+  for (const match of text.matchAll(BACKTICKS)) if (match[1] !== undefined) out.push(match[1])
   return out
 }
 
@@ -323,13 +434,27 @@ function gitOps(segments: readonly Segment[]): GitOp[] {
   return ops
 }
 
+const dedupe = <T>(items: readonly T[]): T[] => {
+  const seen = new Set<string>()
+  return items.filter((item) => {
+    const key = JSON.stringify(item)
+    return seen.has(key) ? false : (seen.add(key), true)
+  })
+}
+
 function analyzeSegments(command: string, segments: readonly Segment[], depth: number): CommandFacts {
   const readFiles: string[] = []
   const secretVars: string[] = []
   let isEnvDump = false
+  const searches: Search[] = []
+  /** Files this command fills with the value of a secret variable, and which variables. */
+  const written = new Map<string, string[]>()
 
   for (const segment of segments) {
-    const { name, args, isBareEnv } = programOf(segment.words)
+    const { name, args, isBareEnv, isPlain } = programOf(segment.words)
+    if (written.size > 0 && (VIEWERS.has(name) || name === 'sed' || name === 'awk')) {
+      for (const file of operands(args)) secretVars.push(...(written.get(file) ?? []))
+    }
     const isFiltered = segments.some(
       (other) => other !== segment && other.pipeline === segment.pipeline && ['cut', 'wc'].includes(programOf(other.words).name),
     )
@@ -343,8 +468,23 @@ function analyzeSegments(command: string, segments: readonly Segment[], depth: n
     } else if (name === 'set' && args.length === 0) {
       if (!isFiltered) isEnvDump = true
     } else if (name === 'echo' || name === 'printf') {
+      const printed: string[] = []
       for (const match of segment.words.join(' ').matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g)) {
-        if (match[1] !== undefined && isSecretName(match[1])) secretVars.push(match[1])
+        if (match[1] !== undefined && isSecretName(match[1])) printed.push(match[1])
+      }
+      // Redirected to a file, the value is not printed; reading that file back in the same command is.
+      const targets = outputTargets(args)
+      if (targets.length === 0) secretVars.push(...printed)
+      else if (printed.length > 0) for (const target of targets) written.set(target, printed)
+    } else if (SEARCHERS.has(name)) {
+      const parsed = parseSearch(name, args, isPlain)
+      if (parsed.search !== undefined) searches.push(parsed.search)
+      // A search that names a sensitive file is a plain read of it, unless it only lists names or counts.
+      if (!parsed.isListOnly) {
+        for (const file of parsed.paths) {
+          if (/^\/proc\/[^/]+\/environ$/.test(file)) isEnvDump = true
+          else if (isSensitiveOperand(file)) readFiles.push(file)
+        }
       }
     } else if (VIEWERS.has(name)) {
       for (const file of operands(args)) {
@@ -363,12 +503,13 @@ function analyzeSegments(command: string, segments: readonly Segment[], depth: n
       readFiles.push(...facts.readFiles)
       secretVars.push(...facts.secretVars)
       isEnvDump ||= facts.isEnvDump
+      searches.push(...facts.searches)
       git = [...git, ...facts.git]
       touches ||= facts.touchesConfig
     }
   }
 
-  return { readFiles: [...new Set(readFiles)], isEnvDump, secretVars: [...new Set(secretVars)], git, touchesConfig: touches, namesOnly: namesOnlyFor(segments, readFiles, isEnvDump) }
+  return { readFiles: [...new Set(readFiles)], isEnvDump, secretVars: [...new Set(secretVars)], searches: dedupe(searches), git, touchesConfig: touches, namesOnly: namesOnlyFor(segments, readFiles, isEnvDump) }
 }
 
 /** The replacement that lists names only, for a command that is one plain view of env files or the bare environment. */
@@ -387,16 +528,54 @@ function namesOnlyFor(segments: readonly Segment[], readFiles: readonly string[]
 
 const WRITERS = new Set(['echo', 'printf', 'cat'])
 
+/** `sed` options that edit the file in place: `-i`, `-i.bak`, `-Ei`, `--in-place`. */
+const isInPlace = (word: string): boolean => /^-[EnrsuzS]*i/.test(word) || word === '--in-place' || word.startsWith('--in-place=')
+
+/** The files `sed -i` rewrites, or `undefined` when it is not an in-place edit of named files. */
+function inPlaceTargets(args: readonly string[]): string[] | undefined {
+  if (!args.some(isInPlace)) return undefined
+  const words: string[] = []
+  for (let i = 0; i < args.length; i++) {
+    const word = args[i] as string
+    if (word === '-i' && args[i + 1] === '') i++ // macOS: the backup suffix is its own, empty, word
+    else if (word === '-e' || word === '-f') {
+      words.push('-e')
+      i++
+    } else if (!isFlag(word) || word === '-') words.push(word)
+  }
+  const script = words.includes('-e') ? 0 : 1
+  const targets = words.filter((w) => w !== '-e').slice(script)
+  return targets.length > 0 ? targets : undefined
+}
+
+/** True when a `tee` segment sends its standard output to /dev/null, so it writes the files and prints nothing. */
+const isQuietTee = (args: readonly string[]): boolean => {
+  for (let i = 0; i < args.length; i++) {
+    if (/^>>?$/.test(args[i] as string) && args[i + 1] === '/dev/null') return true
+  }
+  return false
+}
+
 /** The files a command only writes to, or `undefined` when it does anything else as well. */
 function writeTargetsOf(command: string, segments: readonly Segment[]): string[] | undefined {
-  if (segments.length !== 1 || substitutions(command).length > 0) return undefined
-  const { name, args } = programOf((segments[0] as Segment).words)
-  if (!WRITERS.has(name)) return undefined
-  const targets: string[] = []
-  for (let i = 0; i < args.length; i++) {
-    if (/^>>?\|?$/.test(args[i] as string) && args[i + 1] !== undefined) targets.push(args[++i] as string)
+  if (substitutions(command).length > 0) return undefined
+  if (segments.length === 1) {
+    const { name, args } = programOf((segments[0] as Segment).words)
+    if (name === 'sed') return inPlaceTargets(args)
+    if (!WRITERS.has(name)) return undefined
+    const targets = outputTargets(args)
+    return targets.length > 0 ? targets : undefined
   }
-  return targets.length > 0 ? targets : undefined
+  // `echo … | tee -a file > /dev/null`: tee prints what it writes, so only the quiet form is a plain write.
+  if (segments.length === 2 && (segments[0] as Segment).pipeline === (segments[1] as Segment).pipeline) {
+    const writer = programOf((segments[0] as Segment).words)
+    const tee = programOf((segments[1] as Segment).words)
+    if (!['echo', 'printf'].includes(writer.name) || outputTargets(writer.args).length > 0) return undefined
+    if (tee.name !== 'tee' || !isQuietTee(tee.args)) return undefined
+    const targets = operands(tee.args).filter((word) => word !== '/dev/null')
+    return targets.length > 0 ? targets : undefined
+  }
+  return undefined
 }
 
 export function analyzeCommand(command: string): CommandFacts {

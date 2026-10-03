@@ -20,7 +20,7 @@ test('key in code: Cancel denies and the message holds no value', async ($, on) 
   const r = await write($, 'src/config.ts', config(secret))
 
   expect(isDenied(r)).toBe(true)
-  expect(r.deny.startsWith('LeakStop blocked this write: src/config.ts:1 contains an Anthropic API key (sk-ant-…).')).toBe(true)
+  expect(r.deny.includes('LeakStop blocked this write: src/config.ts:1 contains an Anthropic API key (sk-ant-…).')).toBe(true)
   expect(r.deny.includes(secret)).toBe(false)
   expect(r.deny.includes(secret.slice(14))).toBe(false)
   expect(asked.questions.length).toBe(1)
@@ -61,7 +61,7 @@ test('paths are shown relative to the session directory', async ($, on) => {
   gitSays(on, 'tracked')
   const asked = answerWith(on, CANCEL)
   const r = await write($, `${CWD}/src/config.ts`, config(token()))
-  expect(r.deny.startsWith('LeakStop blocked this write: src/config.ts:1')).toBe(true)
+  expect(r.deny.includes('LeakStop blocked this write: src/config.ts:1')).toBe(true)
   expect(asked.questions[0]?.includes('→ src/config.ts:1')).toBe(true)
   expect(JSON.stringify(env.findings()).includes(CWD)).toBe(false)
 })
@@ -86,7 +86,7 @@ test('no interface: a rejected ask denies', async ($, on) => {
   answerWith(on, REJECT)
   const r = await write($, 'src/config.ts', config(token()))
   expect(isDenied(r)).toBe(true)
-  expect(r.deny.startsWith('LeakStop blocked this write')).toBe(true)
+  expect(r.deny.includes('LeakStop blocked this write')).toBe(true)
 })
 
 // --- Ignored files, placeholders and edits ---------------------------------
@@ -131,7 +131,7 @@ test('an Edit that adds a secret is held, with the real line number', async ($, 
   answerWith(on, CANCEL)
   const r = await $.tool.call({ tool: 'Edit', file_path: 'src/config.ts', old_string: 'const b = 2', new_string: `const key = "${token()}"` })
   expect(isDenied(r)).toBe(true)
-  expect(r.deny.startsWith('LeakStop blocked this edit: src/config.ts:5 contains')).toBe(true)
+  expect(r.deny.includes('LeakStop blocked this edit: src/config.ts:5 contains')).toBe(true)
 })
 
 test('a NotebookEdit that adds a secret is held', async ($, on) => {
@@ -140,7 +140,7 @@ test('a NotebookEdit that adds a secret is held', async ($, on) => {
   answerWith(on, CANCEL)
   const r = await $.tool.call({ tool: 'NotebookEdit', notebook_path: 'analysis.ipynb', new_source: `key = "${token()}"` })
   expect(isDenied(r)).toBe(true)
-  expect(r.deny.startsWith('LeakStop blocked this notebook edit: analysis.ipynb:1')).toBe(true)
+  expect(r.deny.includes('LeakStop blocked this notebook edit: analysis.ipynb:1')).toBe(true)
 })
 
 test('placeholders and ordinary code pass with no question', async ($, on) => {
@@ -271,4 +271,40 @@ test('other tools are not touched', async ($, on) => {
   toolsRun(on)
   const r = await $.tool.call({ tool: 'Read', file_path: 'src/index.ts' })
   expect(ran(r)).toBe(true)
+})
+
+// --- The denial says who decided -------------------------------------------
+
+test('Cancel: the denial tells the model not to retry', async ($, on) => {
+  toolsRun(on)
+  gitSays(on, 'tracked')
+  answerWith(on, CANCEL)
+  const r = await write($, 'src/config.ts', config(token()))
+  expect(r.deny.startsWith('The user chose Cancel')).toBe(true)
+})
+
+test('"Use environment variable": the denial tells the model to do it now', async ($, on) => {
+  toolsRun(on)
+  gitSays(on, 'tracked')
+  answerWith(on, USE_ENV)
+  const r = await write($, 'src/config.ts', config(token()))
+  expect(r.deny.startsWith('The user chose "Use environment variable": do that now')).toBe(true)
+})
+
+test('free text: the denial relays what the user wrote and says it is no approval', async ($, on) => {
+  toolsRun(on)
+  gitSays(on, 'tracked')
+  answerWith(on, 'vale, adelante')
+  const r = await write($, 'src/config.ts', config(token()))
+  expect(isDenied(r)).toBe(true)
+  expect(r.deny.includes('answered: "vale, adelante"')).toBe(true)
+  expect(r.deny.includes('not an approval')).toBe(true)
+})
+
+test('no interface: the denial says nobody could be asked', async ($, on) => {
+  toolsRun(on)
+  gitSays(on, 'tracked')
+  answerWith(on, REJECT)
+  const r = await write($, 'src/config.ts', config(token()))
+  expect(r.deny.startsWith('LeakStop could not ask the user')).toBe(true)
 })

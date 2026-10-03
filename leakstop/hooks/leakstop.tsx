@@ -28,11 +28,7 @@ import { decide, decideAll } from './policy.ts'
 import type { Action, Destination, Mode } from './policy.ts'
 import { USAGE, bannerLine, fit, historyRows, parseArgs, resolveIds, summaryText } from './ui.ts'
 
-const USE_ENV = 'Use environment variable'
-const ALLOW_ONCE = 'Allow once'
-const CANCEL = 'Cancel'
-const SHOW_NAMES = 'Show names only'
-const ADD_GITIGNORE = 'Add to .gitignore'
+const { USE_ENV, ALLOW_ONCE, CANCEL, SHOW_NAMES, ADD_GITIGNORE } = say
 
 const MAX_FINDINGS = 100
 const MAX_ALLOW_ONCE = 500
@@ -234,7 +230,7 @@ async function settle($: EngineInterface, spec: Spec): Promise<Verdict> {
         return { command: spec.rewrite }
       }
       await record($, spec.tool, spec.path, spec.notes, 'denied')
-      return { deny: spec.deny }
+      return { deny: `${say.answerNote(answer)} ${spec.deny}` }
     }
     case 'block':
       await record($, spec.tool, spec.path, spec.notes, 'denied')
@@ -256,7 +252,7 @@ async function checkConfig($: EngineInterface, tool: string, shownPath: string, 
   const answer = await askUser($, say.configQuestion(shownPath), [ALLOW_ONCE, CANCEL])
   if (answer === ALLOW_ONCE) return undefined
   await record($, tool, shownPath, [await operation('config-edit', 'LeakStop configuration change', `config:${shownPath}`)], 'denied')
-  return { deny: say.configDenyMessage(shownPath) }
+  return { deny: `${say.answerNote(answer)} ${say.configDenyMessage(shownPath)}` }
 }
 
 /** True when the file is sensitive by path and, for `.npmrc` and `.pypirc`, holds a token. */
@@ -377,6 +373,56 @@ async function checkSensitive($: EngineInterface, facts: CommandFacts, mode: Mod
   }
 
   return command === undefined ? undefined : { command }
+}
+
+/** Sensitive files a recursive search could reach, found by looking in the folders it was given. */
+const FIND_SENSITIVE: readonly string[] = [
+  '(',
+  ...['.env', '.env.*', '*.env', '*.pem', '*.key', '*.p12', '*.pfx', 'id_rsa*', 'id_dsa*', 'id_ecdsa*', 'id_ed25519*', 'credentials.json', 'service-account*.json', '*.tfstate', '*.tfstate.backup'].flatMap((name, i) => (i === 0 ? ['-name', name] : ['-o', '-name', name])),
+  ')',
+  '-type',
+  'f',
+  '-not',
+  '-path',
+  '*/node_modules/*',
+  '-not',
+  '-path',
+  '*/.git/*',
+]
+
+/** `grep -r KEY .` reads `.env` too: grep ignores .gitignore and hidden-file rules. Hold when a sensitive file is within reach. */
+async function checkSearch($: EngineInterface, search: Search, mode: Mode, allowed: ReadonlySet<string>): Promise<Verdict> {
+  const found: string[] = []
+  for (const dir of search.dirs.slice(0, 5)) {
+    try {
+      const result = await $.process.run(['find', dir, '-maxdepth', '8', ...FIND_SENSITIVE], { timeoutMs: 5000 })
+      for (const file of names(result.stdout.replace(/\n/g, '\0'))) found.push(file.replace(/^\.\//, ''))
+    } catch {
+      // A folder that cannot be listed (or takes too long) is not a reason to block the search.
+    }
+  }
+  const candidates = [...new Set(found)]
+    .filter((file) => classifyPath(file) !== undefined && classifyPath(file)?.requiresToken === false)
+    .filter((file) => !matchesAny(file, search.excludes))
+    .filter((file) => search.includes.length === 0 || matchesAny(file, search.includes))
+    .slice(0, 20)
+  // A search that honours .gitignore never opens the files git ignores (a plain .env).
+  const reach: string[] = []
+  for (const file of candidates) if (!(search.respectsIgnore && (await isIgnored($, file)))) reach.push(file)
+  if (reach.length === 0) return undefined
+
+  const note = await operation('sensitive-search', 'Search through sensitive files', `search:${[...reach].sort().join('\n')}`)
+  if (allowed.has(note.fingerprint)) return undefined
+  return settle($, {
+    action: decide('sensitive-dump', 'critical', mode),
+    tool: 'Bash',
+    path: reach.join(', '),
+    notes: [note],
+    question: say.searchQuestion(reach),
+    options: [ALLOW_ONCE, CANCEL],
+    deny: say.searchDeny(reach),
+    warn: [say.noticeLine(`a search would print lines from ${reach.join(', ')}`, mode === 'monitor')],
+  })
 }
 
 /** `git add -A` or `.` (or a named path) that would stage sensitive files git does not ignore. */
@@ -539,7 +585,9 @@ export const register: Register = (on, options) => {
       } catch {
         isPlaced = false
       }
-      return isPlaced ? { text: '' } : { text: summaryText(findings, paused, config.warnings) }
+      // Where nothing is drawn (the VS Code panel) a "placed" panel is invisible: say it in text.
+      const isShown = isPlaced && (await drawsBanner($))
+      return isShown ? {} : { text: summaryText(findings, paused, config.warnings) }
     }
     if (args.kind === 'usage') return { text: USAGE }
 
@@ -675,6 +723,11 @@ export const register: Register = (on, options) => {
     if (sensitive !== undefined) {
       if ('deny' in sensitive) return sensitive
       command = sensitive.command
+    }
+
+    for (const search of facts.searches) {
+      const verdict = await checkSearch($, search, mode, allowed)
+      if (verdict !== undefined && 'deny' in verdict) return verdict
     }
 
     for (const op of facts.git) {

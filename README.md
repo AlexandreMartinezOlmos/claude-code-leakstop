@@ -41,7 +41,7 @@ Most of the time you do nothing: LeakStop stays quiet until something looks dang
 
 | What happens | When | What you see |
 | --- | --- | --- |
-| **Pass** | Nothing sensitive, or the secret is going somewhere safe (for example a `.env` that git ignores, even when Claude writes it with `cat > .env <<EOF`) | Nothing |
+| **Pass** | Nothing sensitive, or the secret is going somewhere safe (for example a `.env` that git ignores, even when Claude writes it with `cat > .env <<EOF`, `sed -i` or `tee`) | Nothing |
 | **Warn** | A weaker signal, like a JWT or a `password = "…"` that might be a test fixture | A line above the prompt, until your next message |
 | **Hold** | A real secret is about to be written, or a sensitive file or the whole environment is about to be printed | A question with numbered options. Anything other than "Allow once" (including closing the dialog) means **no** |
 | **Block** | A `git commit` or `git push` that would publish a secret | Denied straight away, with the reason sent to Claude |
@@ -49,7 +49,7 @@ Most of the time you do nothing: LeakStop stays quiet until something looks dang
 ### What it watches
 
 - **Files Claude writes or edits.** Private keys, and tokens from AWS, GitHub, GitLab, Anthropic, OpenAI, Stripe, Slack, Google, npm and Hugging Face; passwords inside URLs (`postgres://user:pass@host`); JWTs; and `password = "…"`-style assignments. For an edit it only looks at the *new* text, so a secret that was already in the file does not raise a false alarm.
-- **Commands Claude runs.** A literal secret in a command (`curl -H "Authorization: Bearer …"`, `export TOKEN=…`, `--build-arg`); `cat`, `head`, `less` or `grep` of `.env`, `*.pem`, `id_rsa` and similar files; `printenv`, `env`, `echo $TOKEN`; and `git add -A` or `git add .` when it would stage a sensitive file that git does not ignore.
+- **Commands Claude runs.** A literal secret in a command (`curl -H "Authorization: Bearer …"`, `export TOKEN=…`, `--build-arg`); `cat`, `head`, `less` or `grep` of `.env`, `*.pem`, `id_rsa` and similar files; recursive searches such as `grep -r KEY .` when they would reach a sensitive file (inside Claude Code, a plain `grep` and `rg` skip files that git ignores, so an ignored `.env` is safe; a sensitive file that git does not ignore, `command grep`, `/usr/bin/grep` or `rg --no-ignore` are not); `printenv`, `env`, `echo $TOKEN`; and `git add -A` or `git add .` when it would stage a sensitive file that git does not ignore.
 - **Commits and pushes.** It reads the lines a `git commit` would add and the commits a `git push` would publish, and blocks them if they hold a secret.
 - **Files Claude reads.** Reading a sensitive file puts its contents in the conversation, so that is held too.
 
@@ -156,7 +156,8 @@ LeakStop runs with the same access as Claude Code and is not sandboxed, so it is
 
 LeakStop is a safety net, not a wall. Please read this part.
 
-- **It reads text; it does not run anything.** A secret that is base64-encoded, split across variables, built by a script (`python -c`, `node -e`) or read by a program is not seen. Commands such as `grep -r`, `git show HEAD:.env` or `find -exec cat` are not covered either.
+- **It reads text; it does not run anything.** A secret that is base64-encoded, split across variables, built by a script (`python -c`, `node -e`) or read by a program is not seen. Commands such as `git show HEAD:.env` or `find -exec cat` are not covered either.
+- **It does not look at tools that send data out yet.** LeakStop covers the tools that read or write local files and the shell. It does not scan what goes into web requests, messages to other agents or sessions, sent files or other MCP tools.
 - **It can be switched off without telling you.** `--safe-mode`, `--bare`, `disableAllHooks` in your settings, an organisation policy, or Anthropic switching installed mods off remotely all stop it. Check `/plugin` now and then.
 - **Where nothing can be drawn, it cannot ask.** In `claude -p`, the Agent SDK, the cloud and the VS Code chat panel, anything LeakStop would hold is **denied** (it never hangs), which can break an automation; use `monitor` mode there. Warnings are written to the transcript instead of the banner.
 - **It also fires on harmless things sometimes.** Weaker signals can be test data or documentation examples. That is why they only warn by default, and why `ignorePaths` exists.
@@ -180,6 +181,12 @@ cd claude-code-leakstop
 claude --plugin-dir ./leakstop      # loads the mod and reloads it when you save
 (cd leakstop && claude plugin test) # unit and interface tests
 claude plugin validate ./leakstop --strict
+```
+
+A mod loaded with `--plugin-dir` is not *installed*, so `/plugin configure` does not apply to it. Pass the mode for that session instead:
+
+```
+claude --plugin-dir ./leakstop --settings '{"pluginConfigs":{"leakstop":{"options":{"mode":"monitor"}}}}'
 ```
 
 While developing, use `monitor` mode so LeakStop does not hold its own test files, and test in a throwaway project. Test secrets are generated at run time; no real-looking secret is ever committed to this repository.
