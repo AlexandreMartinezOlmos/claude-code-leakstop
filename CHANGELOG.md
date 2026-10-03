@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1
 
 - A recursive `grep` or `rg` over a folder that holds sensitive files (`.env`, keys, credentials) is now held when the search would really reach them. Claude Code's own `grep` and `rg` honour `.gitignore`, so a plain `grep -r KEY .` no longer asks because of an ignored `.env`; `command grep`, `/usr/bin/grep`, `egrep`, `rg --no-ignore` and `rg -uu` still do. Excluding those files (`--exclude`, `-g '!…'`), limiting the search (`--include`) or listing only names (`-l`, `-c`) keeps it quiet.
 - The message Claude reads after a denial now says what you did: Cancel ("do not retry"), Use environment variable or Add to .gitignore ("do it now"), or your own words when you type an answer. Before, all of them read the same and Claude asked you again.
