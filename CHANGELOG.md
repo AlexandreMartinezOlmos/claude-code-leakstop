@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - Outbound tools are watched. A secret in what `WebFetch`, `WebSearch`, `Agent`, `SendMessage`, `SendFile`, `Artifact`, `ArtifactData`, `ArtifactComments`, `PushNotification`, `SendFeedback`, `RemoteTrigger` or any MCP tool is about to send away is held (a weaker finding warns, and `strict` holds it), with a question that says where it would go and a message to Claude that says what to do instead. `SendFile` and `Artifact` also send local files: those are read and scanned, and a sensitive file (`.env`, keys, credentials) is held outright. In `monitor` mode it only warns, and an internal failure denies in `standard` and `strict`.
 
