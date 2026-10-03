@@ -17,12 +17,20 @@ export type Segment = {
 
 /** Splits on `&&`, `||`, `;`, `&`, `|`, newlines and parentheses; skips heredoc bodies. */
 export function parseCommand(command: string): Segment[] {
+  return parseWithBodies(command).segments
+}
+
+/** `<<'EOF'` bodies are text, not shell: nothing in them is expanded or run. */
+type Span = { start: number; end: number }
+
+function parseWithBodies(command: string): { segments: Segment[]; literalBodies: Span[] } {
   const segments: Segment[] = []
+  const literalBodies: Span[] = []
   let words: string[] = []
   let word = ''
   let hasWord = false
   let pipeline = 0
-  let heredocs: { delimiter: string; isIndented: boolean }[] = []
+  let heredocs: { delimiter: string; isIndented: boolean; isLiteral: boolean }[] = []
 
   const endWord = (): void => {
     if (hasWord) words.push(word)
@@ -78,12 +86,14 @@ export function parseCommand(command: string): Segment[] {
       i++
       // Skip the bodies of heredocs opened on the line that just ended.
       for (const heredoc of heredocs) {
+        const start = i
         while (i < command.length) {
           const lineEnd = command.indexOf('\n', i)
           const line = command.slice(i, lineEnd < 0 ? command.length : lineEnd)
           i = lineEnd < 0 ? command.length : lineEnd + 1
           if ((heredoc.isIndented ? line.trim() : line) === heredoc.delimiter) break
         }
+        if (heredoc.isLiteral) literalBodies.push({ start, end: i })
       }
       heredocs = []
       continue
@@ -121,13 +131,14 @@ export function parseCommand(command: string): Segment[] {
       if (isIndented) j++
       while (command[j] === ' ') j++
       const quote = command[j] === "'" || command[j] === '"' ? command[j] : undefined
+      const isLiteral = quote !== undefined || command[j] === '\\'
       if (quote !== undefined) j++
       let delimiter = ''
       while (j < command.length && !/[\s;&|()<>'"]/.test(command[j] as string)) delimiter += command[j++]
       if (quote !== undefined && command[j] === quote) j++
       endWord()
       words.push('<<')
-      if (delimiter !== '') heredocs.push({ delimiter, isIndented })
+      if (delimiter !== '') heredocs.push({ delimiter, isIndented, isLiteral })
       i = j
       continue
     }
@@ -149,7 +160,7 @@ export function parseCommand(command: string): Segment[] {
     i++
   }
   endSegment(false)
-  return segments
+  return { segments, literalBodies }
 }
 
 // --- Programs --------------------------------------------------------------
@@ -363,9 +374,17 @@ const BACKTICKS = new RegExp('\\x60([^\\x60]*)\\x60', 'g')
 
 /** Text of command substitutions (dollar-parenthesis and backticks), which can hide a command inside quotes. */
 function substitutions(command: string): string[] {
+  // The body of `<<'EOF'` is never expanded, so a `$(…)` or backticks in it are only text.
+  let text = ''
+  let at = 0
+  for (const { start, end } of parseWithBodies(command).literalBodies) {
+    text += command.slice(at, start)
+    at = end
+  }
+  text += command.slice(at)
   const out: string[] = []
-  for (const match of command.matchAll(/\$\(([^()]*)\)/g)) if (match[1] !== undefined) out.push(match[1])
-  for (const match of command.matchAll(BACKTICKS)) if (match[1] !== undefined) out.push(match[1])
+  for (const match of text.matchAll(/\$\(([^()]*)\)/g)) if (match[1] !== undefined) out.push(match[1])
+  for (const match of text.matchAll(BACKTICKS)) if (match[1] !== undefined) out.push(match[1])
   return out
 }
 
