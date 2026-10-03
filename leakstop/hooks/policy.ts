@@ -12,6 +12,7 @@ export type Destination =
   | 'file' // Write/Edit to a path git does not ignore
   | 'ignored-file' // Write/Edit to a path git ignores, like a .env
   | 'command' // a literal secret inside a Bash command
+  | 'outbound' // a secret in what a tool sends away: the web, another agent, a published page, an MCP server
   | 'sensitive-dump' // cat/head/less of a sensitive file, printenv, env
   | 'git-add' // git add -A or . with unignored sensitive files
   | 'git-commit' // secrets in what is staged
@@ -46,6 +47,7 @@ export function decide(destination: Destination, severity: Severity, mode: Mode)
       return mode === 'strict' ? 'block' : 'warn'
     case 'file':
     case 'command':
+    case 'outbound':
       if (severity === 'critical') return 'hold'
       return mode === 'strict' ? 'hold' : 'warn'
   }

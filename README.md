@@ -52,6 +52,7 @@ Most of the time you do nothing: LeakStop stays quiet until something looks dang
 - **Commands Claude runs.** A literal secret in a command (`curl -H "Authorization: Bearer …"`, `export TOKEN=…`, `--build-arg`); `cat`, `head`, `less` or `grep` of `.env`, `*.pem`, `id_rsa` and similar files; recursive searches such as `grep -r KEY .` when they would reach a sensitive file (inside Claude Code, a plain `grep` and `rg` skip files that git ignores, so an ignored `.env` is safe; a sensitive file that git does not ignore, `command grep`, `/usr/bin/grep` or `rg --no-ignore` are not); `printenv`, `env`, `echo $TOKEN`; and `git add -A` or `git add .` when it would stage a sensitive file that git does not ignore.
 - **Commits and pushes.** It reads the lines a `git commit` would add and the commits a `git push` would publish, and blocks them if they hold a secret.
 - **Files Claude reads.** Reading a sensitive file puts its contents in the conversation, so that is held too.
+- **What Claude sends out.** A secret in a `WebFetch` URL or prompt, a `WebSearch` query, an `Agent` prompt, a `SendMessage`, a push notification, feedback to Anthropic, an `Artifact` page or its database, a remote trigger, or *any argument of an MCP tool* is held before it leaves the session, because it cannot be taken back. `SendFile` and `Artifact` also send files: LeakStop reads them first, and holds `.env`, keys and other sensitive files outright. The question says where it would go (a web server, another agent, a page other people may open, an MCP server). `SendUserFile` and `SendUserMessage` are not watched: they only reach you.
 
 Placeholders (`your-api-key`, `changeme`, `<TOKEN>`), Amazon's documentation example key, commit hashes, UUIDs and lockfile hashes are recognised and left alone.
 
@@ -142,10 +143,12 @@ LeakStop runs with the same access as Claude Code and is not sandboxed, so it is
   $ claude plugin validate ./leakstop --strict        (abridged)
   ./leakstop.tsx hooks: session.start, prompt.submit, command.run{command=leakstop},
       ui.render{component=AbovePrompt}, ui.render{component=Pane, requestId=leakstop},
-      tool.call{tool=Edit|Write|NotebookEdit}, tool.call{tool=Bash}, tool.call{tool=Read}
+      tool.call{tool=Edit|Write|NotebookEdit}, tool.call{tool=Bash}, tool.call{tool=Read},
+      tool.call{tool=WebFetch|WebSearch|Agent|SendMessage|SendFile|Artifact|…},
+      tool.call{tool=/"^mcp__"/}
   ./leakstop.tsx calls: $.clock.now, $.command.register, $.fs.exists, $.fs.read, $.process.run,
-      $.session.cwd, $.session.surfaces, $.state.get, $.state.set, $.store.get, $.store.set,
-      $.ui.ask, $.ui.close, $.ui.log, $.ui.open, $.ui.resolve
+      $.session.cwd, $.session.surfaces, $.state.get, $.state.set, $.store.delete, $.store.get,
+      $.store.set, $.ui.ask, $.ui.close, $.ui.log, $.ui.open, $.ui.resolve
   ✔ Validation passed
   ```
 

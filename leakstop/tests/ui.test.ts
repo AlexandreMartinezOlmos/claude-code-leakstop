@@ -30,6 +30,9 @@ test('says where it happened', () => {
   expect(where(finding())).toBe('tests/fixtures/user.json:8')
   expect(where(finding({ path: '', tool: 'Bash', line: 0 }))).toBe('Bash command')
   expect(where(finding({ path: '.env', line: 0 }))).toBe('.env')
+  expect(where(finding({ path: '', tool: 'WebFetch', line: 0 }))).toBe('WebFetch call')
+  expect(where(finding({ path: '', tool: 'mcp__github__create_issue', line: 0 }))).toBe('MCP github/create_issue call')
+  expect(where(finding({ path: 'MCP docs/batch › batch[0]', tool: 'mcp__docs__batch', line: 0 }))).toBe('MCP docs/batch › batch[0]')
 })
 
 test('the banner names severity, type, place and the command, in the spec’s shape', () => {

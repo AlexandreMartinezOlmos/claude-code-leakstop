@@ -4,6 +4,7 @@
 // here depends on the terminal's own size.
 
 import type { StoredFinding } from '../types'
+import { toolLabel } from './outbound.ts'
 
 /** `…` when a line is cut. */
 export function fit(text: string, width: number): string {
@@ -21,7 +22,7 @@ const SEVERITY = { critical: 'CRITICAL', medium: 'MEDIUM' } as const
 
 /** Where it happened: a file and line, or the command. */
 export function where(finding: StoredFinding): string {
-  if (finding.path === '') return `${finding.tool} command`
+  if (finding.path === '') return finding.tool === 'Bash' ? 'Bash command' : `${toolLabel(finding.tool)} call`
   return finding.line > 0 ? `${finding.path}:${finding.line}` : finding.path
 }
 

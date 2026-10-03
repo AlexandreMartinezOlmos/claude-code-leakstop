@@ -17,13 +17,14 @@ import { analyzeCommand } from './commands.ts'
 import { EMPTY_CONFIG, matchesAny, parseConfig, toRule } from './config.ts'
 import type { CommandFacts, GitOp } from './commands.ts'
 import { classifyPath, scanEdit, scanText, scanWrite } from './detect.ts'
-import type { Rule, ScanResult } from './detect.ts'
+import type { Finding, Rule, ScanResult } from './detect.ts'
 import { scanDiff } from './diff.ts'
 import type { DiffFinding } from './diff.ts'
 import { describe, fingerprint } from './mask.ts'
 import type { MaskedFinding } from './mask.ts'
 import * as say from './messages.ts'
 import type { WriteTool } from './messages.ts'
+import { collect, toolLabel } from './outbound.ts'
 import { decide, decideAll } from './policy.ts'
 import type { Action, Destination, Mode } from './policy.ts'
 import { USAGE, allowedText, bannerLine, fit, historyRows, mergeAllowed, parseArgs, resolveIds, summaryText } from './ui.ts'
@@ -544,6 +545,80 @@ async function checkGit($: EngineInterface, op: GitOp, mode: Mode, allowed: Read
   return checkPublish($, 'push', await pendingForPush($, op, config), mode, allowed, config)
 }
 
+// --- Outbound tools ------------------------------------------------------------
+
+/** Secrets in what a tool sends away: the web, another agent or session, a published page, an MCP server. */
+async function guardOutbound($: EngineInterface, e: ToolCallInput, mode: Mode): Promise<Verdict> {
+  const { value: paused = false } = await $.state.get(pausedRef)
+  if (paused) return undefined
+
+  const tool = e.tool
+  const label = toolLabel(tool)
+  const config = await getConfig($)
+  const allowed = await allowedFingerprints($, config)
+  const rules = customRules(config)
+  const out = collect(e as unknown as Record<string, unknown>)
+  if (out.isTruncated) $.ui.log(`LeakStop: ${label} carries more than LeakStop reads, so only part of it was scanned`)
+
+  const found: (Finding & { path: string })[] = []
+  for (const part of out.texts) {
+    const scan = scanText(part.text, { extraRules: rules })
+    if (scan.isSkipped) $.ui.log(`LeakStop: ${label} ${part.field} is larger than 4 MiB and was not scanned`)
+    if (scan.isPartial) $.ui.log(`LeakStop: the custom rules were too slow and did not cover ${label} ${part.field}`)
+    // The place is the argument, not a line: it is not a file.
+    for (const finding of scan.findings) found.push({ ...finding, line: 0, path: `${label} › ${part.field}` })
+  }
+
+  // Files the call sends: sensitive ones are held as they are, the rest are read and scanned.
+  const sensitive: string[] = []
+  for (const file of out.files) {
+    if (await isSensitiveFile($, file)) {
+      sensitive.push(file)
+      continue
+    }
+    try {
+      const content = await $.fs.read(file)
+      if (typeof content !== 'string') continue
+      const scan = scanText(content, { path: file, extraRules: rules })
+      if (scan.isSkipped) $.ui.log(`LeakStop: ${file} is larger than 4 MiB and was not scanned`)
+      for (const finding of scan.findings) found.push({ ...finding, path: file })
+    } catch {
+      // Unreadable or over 4 MiB: it cannot be checked, and the tool will say if it cannot read it either.
+    }
+  }
+
+  const fileNotes = await Promise.all(sensitive.map((file) => operation('sensitive-file-send', 'Sensitive file sent', `path:${file}`)))
+  const pendingFiles = sensitive.filter((_, i) => !allowed.has((fileNotes[i] as Note).fingerprint))
+  if (pendingFiles.length > 0) {
+    const verdict = await settle($, {
+      action: decide('sensitive-dump', 'critical', mode),
+      tool,
+      path: pendingFiles.join(', '),
+      notes: fileNotes.filter((n) => !allowed.has(n.fingerprint)),
+      question: say.outboundFileQuestion(tool, pendingFiles),
+      options: [ALLOW_ONCE, CANCEL],
+      deny: say.outboundFileDeny(tool, pendingFiles),
+      warn: [say.noticeLine(`${label} would send ${pendingFiles.join(', ')}`, mode === 'monitor')],
+    })
+    if (verdict !== undefined && 'deny' in verdict) return verdict
+  }
+
+  if (found.length === 0) return undefined
+  const described = await Promise.all(found.map(async (f) => ({ ...(await describe(f)), path: f.path })))
+  const masked = described.filter((f) => !allowed.has(f.fingerprint) && !isRelaxed(config, f.severity, f.path))
+  if (masked.length === 0) return undefined
+  return settle($, {
+    action: decideAll('outbound', masked.map((f) => f.severity), mode),
+    tool,
+    path: '',
+    notes: masked,
+    question: say.outboundQuestion(tool, masked),
+    options: [ALLOW_ONCE, CANCEL],
+    deny: say.outboundDeny(tool, masked),
+    warn: masked.map((f) => say.noticeLine(`${f.severity.toUpperCase()} · ${f.label} in ${f.path}`, mode === 'monitor')),
+  })
+}
+
 // --- Pure helpers of this file (no `$`) -------------------------------------
 
 type Call = { tool: WriteTool; path: string; result: ScanResult; oldString?: string }
@@ -804,6 +879,17 @@ export const register: Register = (on, options) => {
       deny: say.readDeny(shownPath, mode === 'strict'),
       warn: [say.noticeLine(`${shownPath} is a sensitive file`, mode === 'monitor')],
     })
+    return verdict === undefined ? next(e) : { deny: (verdict as { deny: string }).deny }
+  }).catch(($, e, next) => onFailure(mode, next) ?? next(e))
+
+  // What leaves the session through a tool: a secret there cannot be taken back.
+  on('tool.call', { tool: ['WebFetch', 'WebSearch', 'Agent', 'SendMessage', 'SendFile', 'Artifact', 'ArtifactData', 'ArtifactComments', 'PushNotification', 'SendFeedback', 'RemoteTrigger'] }, async ($, e, next) => {
+    const verdict = await guardOutbound($, e, mode)
+    return verdict === undefined ? next(e) : { deny: (verdict as { deny: string }).deny }
+  }).catch(($, e, next) => onFailure(mode, next) ?? next(e))
+
+  on('tool.call', { tool: /^mcp__/ }, async ($, e, next) => {
+    const verdict = await guardOutbound($, e, mode)
     return verdict === undefined ? next(e) : { deny: (verdict as { deny: string }).deny }
   }).catch(($, e, next) => onFailure(mode, next) ?? next(e))
 }
