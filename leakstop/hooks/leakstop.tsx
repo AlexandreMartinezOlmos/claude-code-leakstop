@@ -205,10 +205,20 @@ async function forgetAllowed($: EngineInterface, fingerprints: readonly string[]
   return removed
 }
 
+/** True when VS Code is the only place the session draws: its dialog runs the lines of a question together. */
+async function isVsCodeOnly($: EngineInterface): Promise<boolean> {
+  try {
+    const surfaces = await $.session.surfaces()
+    return surfaces.includes('vscode') && !surfaces.some((surface) => surface === 'terminal' || surface === 'desktop')
+  } catch {
+    return false
+  }
+}
+
 /** The user's answer, or `undefined` when nobody could answer (dismissed, `claude -p`, no interface). */
 async function askUser($: EngineInterface, question: string, options: readonly string[]): Promise<string | undefined> {
   try {
-    return await $.ui.ask(question, { options, header: 'LeakStop' })
+    return await $.ui.ask((await isVsCodeOnly($)) ? say.flatten(question) : question, { options, header: 'LeakStop' })
   } catch {
     return undefined
   }

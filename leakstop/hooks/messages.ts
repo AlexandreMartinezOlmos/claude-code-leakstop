@@ -39,6 +39,18 @@ export function answerNote(answer: string | undefined): string {
   }
 }
 
+/**
+ * The question as one line, for a surface that does not keep line breaks (the VS Code panel runs them
+ * together into one paragraph): the lines read in order, set apart by dashes.
+ */
+export function flatten(question: string): string {
+  return question
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+    .join(' — ')
+}
+
 /** The tools whose write is checked. */
 export type WriteTool = 'Write' | 'Edit' | 'NotebookEdit'
 
