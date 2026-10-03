@@ -28,11 +28,7 @@ import { decide, decideAll } from './policy.ts'
 import type { Action, Destination, Mode } from './policy.ts'
 import { USAGE, bannerLine, fit, historyRows, parseArgs, resolveIds, summaryText } from './ui.ts'
 
-const USE_ENV = 'Use environment variable'
-const ALLOW_ONCE = 'Allow once'
-const CANCEL = 'Cancel'
-const SHOW_NAMES = 'Show names only'
-const ADD_GITIGNORE = 'Add to .gitignore'
+const { USE_ENV, ALLOW_ONCE, CANCEL, SHOW_NAMES, ADD_GITIGNORE } = say
 
 const MAX_FINDINGS = 100
 const MAX_ALLOW_ONCE = 500
@@ -234,7 +230,7 @@ async function settle($: EngineInterface, spec: Spec): Promise<Verdict> {
         return { command: spec.rewrite }
       }
       await record($, spec.tool, spec.path, spec.notes, 'denied')
-      return { deny: spec.deny }
+      return { deny: `${say.answerNote(answer)} ${spec.deny}` }
     }
     case 'block':
       await record($, spec.tool, spec.path, spec.notes, 'denied')
@@ -256,7 +252,7 @@ async function checkConfig($: EngineInterface, tool: string, shownPath: string, 
   const answer = await askUser($, say.configQuestion(shownPath), [ALLOW_ONCE, CANCEL])
   if (answer === ALLOW_ONCE) return undefined
   await record($, tool, shownPath, [await operation('config-edit', 'LeakStop configuration change', `config:${shownPath}`)], 'denied')
-  return { deny: say.configDenyMessage(shownPath) }
+  return { deny: `${say.answerNote(answer)} ${say.configDenyMessage(shownPath)}` }
 }
 
 /** True when the file is sensitive by path and, for `.npmrc` and `.pypirc`, holds a token. */
