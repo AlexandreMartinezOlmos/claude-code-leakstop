@@ -11,6 +11,8 @@ import { classifyPath } from './detect.ts'
 export type Segment = {
   /** Words with quotes and escapes resolved. Redirections are words of their own (`>`, `<`). */
   words: string[]
+  /** Parallel to `words`: true when the word was written with quotes or a backslash (`\\grep`, `"grep"`). */
+  quoted: boolean[]
   /** Segments joined by `|` share a pipeline id. */
   pipeline: number
 }
@@ -27,20 +29,28 @@ function parseWithBodies(command: string): { segments: Segment[]; literalBodies:
   const segments: Segment[] = []
   const literalBodies: Span[] = []
   let words: string[] = []
+  let quoted: boolean[] = []
   let word = ''
   let hasWord = false
+  let isQuoted = false
   let pipeline = 0
   let heredocs: { delimiter: string; isIndented: boolean; isLiteral: boolean }[] = []
 
+  const pushWord = (text: string, wasQuoted: boolean): void => {
+    words.push(text)
+    quoted.push(wasQuoted)
+  }
   const endWord = (): void => {
-    if (hasWord) words.push(word)
+    if (hasWord) pushWord(word, isQuoted)
     word = ''
     hasWord = false
+    isQuoted = false
   }
   const endSegment = (isPipe: boolean): void => {
     endWord()
-    if (words.length > 0) segments.push({ words, pipeline })
+    if (words.length > 0) segments.push({ words, quoted, pipeline })
     words = []
+    quoted = []
     if (!isPipe) pipeline++
   }
 
@@ -53,6 +63,7 @@ function parseWithBodies(command: string): { segments: Segment[]; literalBodies:
       if (next !== undefined && next !== '\n') {
         word += next
         hasWord = true
+        isQuoted = true
       }
       i += 2
       continue
@@ -62,12 +73,14 @@ function parseWithBodies(command: string): { segments: Segment[]; literalBodies:
       const end = close < 0 ? command.length : close
       word += command.slice(i + 1, end)
       hasWord = true
+      isQuoted = true
       i = end + 1
       continue
     }
     if (char === '"') {
       i++
       hasWord = true
+      isQuoted = true
       while (i < command.length && command[i] !== '"') {
         if (command[i] === '\\' && i + 1 < command.length) i++
         word += command[i]
@@ -137,7 +150,7 @@ function parseWithBodies(command: string): { segments: Segment[]; literalBodies:
       while (j < command.length && !/[\s;&|()<>'"]/.test(command[j] as string)) delimiter += command[j++]
       if (quote !== undefined && command[j] === quote) j++
       endWord()
-      words.push('<<')
+      pushWord('<<', false)
       if (delimiter !== '') heredocs.push({ delimiter, isIndented, isLiteral })
       i = j
       continue
@@ -152,7 +165,7 @@ function parseWithBodies(command: string): { segments: Segment[]; literalBodies:
         op += command[i++]
         while (/[0-9-]/.test(command[i] ?? '')) op += command[i++]
       }
-      words.push(op)
+      pushWord(op, false)
       continue
     }
     word += char
@@ -168,10 +181,10 @@ function parseWithBodies(command: string): { segments: Segment[]; literalBodies:
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
 const WRAPPERS = new Set(['sudo', 'command', 'time', 'nohup', 'exec', 'builtin', 'nice', 'env'])
 
-type Program = { name: string; args: string[]; isBareEnv: boolean; /** Invoked by its bare name, with no wrapper before it. */ isPlain: boolean }
+type Program = { name: string; args: string[]; isBareEnv: boolean; /** Invoked by its bare name, typed with no quotes or backslash and no wrapper before it. */ isPlain: boolean }
 
 /** The program a segment runs, past assignments and wrappers (`sudo`, `env FOO=1`, `time`). */
-function programOf(words: readonly string[]): Program {
+function programOf(words: readonly string[], quoted: readonly boolean[] = []): Program {
   let i = 0
   let isEnv = false
   for (;;) {
@@ -189,7 +202,7 @@ function programOf(words: readonly string[]): Program {
   }
   const first = words[i]
   if (first === undefined) return { name: '', args: [], isBareEnv: isEnv, isPlain: false }
-  return { name: first.split('/').pop() ?? first, args: words.slice(i + 1), isBareEnv: false, isPlain: i === 0 && !first.includes('/') }
+  return { name: first.split('/').pop() ?? first, args: words.slice(i + 1), isBareEnv: false, isPlain: i === 0 && !first.includes('/') && quoted[i] !== true }
 }
 
 /** The files a segment sends its standard output to with `>` or `>>`. */
@@ -451,7 +464,7 @@ function analyzeSegments(command: string, segments: readonly Segment[], depth: n
   const written = new Map<string, string[]>()
 
   for (const segment of segments) {
-    const { name, args, isBareEnv, isPlain } = programOf(segment.words)
+    const { name, args, isBareEnv, isPlain } = programOf(segment.words, segment.quoted)
     if (written.size > 0 && (VIEWERS.has(name) || name === 'sed' || name === 'awk')) {
       for (const file of operands(args)) secretVars.push(...(written.get(file) ?? []))
     }
