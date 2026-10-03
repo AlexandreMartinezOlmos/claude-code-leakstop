@@ -41,7 +41,7 @@ Most of the time you do nothing: LeakStop stays quiet until something looks dang
 
 | What happens | When | What you see |
 | --- | --- | --- |
-| **Pass** | Nothing sensitive, or the secret is going somewhere safe (for example a `.env` that git ignores, even when Claude writes it with `cat > .env <<EOF`) | Nothing |
+| **Pass** | Nothing sensitive, or the secret is going somewhere safe (for example a `.env` that git ignores, even when Claude writes it with `cat > .env <<EOF`, `sed -i` or `tee`) | Nothing |
 | **Warn** | A weaker signal, like a JWT or a `password = "…"` that might be a test fixture | A line above the prompt, until your next message |
 | **Hold** | A real secret is about to be written, or a sensitive file or the whole environment is about to be printed | A question with numbered options. Anything other than "Allow once" (including closing the dialog) means **no** |
 | **Block** | A `git commit` or `git push` that would publish a secret | Denied straight away, with the reason sent to Claude |
@@ -49,7 +49,7 @@ Most of the time you do nothing: LeakStop stays quiet until something looks dang
 ### What it watches
 
 - **Files Claude writes or edits.** Private keys, and tokens from AWS, GitHub, GitLab, Anthropic, OpenAI, Stripe, Slack, Google, npm and Hugging Face; passwords inside URLs (`postgres://user:pass@host`); JWTs; and `password = "…"`-style assignments. For an edit it only looks at the *new* text, so a secret that was already in the file does not raise a false alarm.
-- **Commands Claude runs.** A literal secret in a command (`curl -H "Authorization: Bearer …"`, `export TOKEN=…`, `--build-arg`); `cat`, `head`, `less` or `grep` of `.env`, `*.pem`, `id_rsa` and similar files; recursive searches such as `grep -r KEY .` when a sensitive file is inside the folder being searched (`grep` ignores `.gitignore`, so it would print the values); `printenv`, `env`, `echo $TOKEN`; and `git add -A` or `git add .` when it would stage a sensitive file that git does not ignore.
+- **Commands Claude runs.** A literal secret in a command (`curl -H "Authorization: Bearer …"`, `export TOKEN=…`, `--build-arg`); `cat`, `head`, `less` or `grep` of `.env`, `*.pem`, `id_rsa` and similar files; recursive searches such as `grep -r KEY .` when they would reach a sensitive file (inside Claude Code, a plain `grep` and `rg` skip files that git ignores, so an ignored `.env` is safe; a sensitive file that git does not ignore, `command grep`, `/usr/bin/grep` or `rg --no-ignore` are not); `printenv`, `env`, `echo $TOKEN`; and `git add -A` or `git add .` when it would stage a sensitive file that git does not ignore.
 - **Commits and pushes.** It reads the lines a `git commit` would add and the commits a `git push` would publish, and blocks them if they hold a secret.
 - **Files Claude reads.** Reading a sensitive file puts its contents in the conversation, so that is held too.
 
