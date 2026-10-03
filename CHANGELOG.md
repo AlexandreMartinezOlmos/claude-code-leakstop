@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `/leakstop allowed` lists what is allowed (this session, for good, `.leakstop.json`) with the fingerprint and, when known, the type and place of each; `/leakstop forget <number or sha256:…>` and `/leakstop forget all` take back what you allowed; `/leakstop reload` reads `.leakstop.json` again without restarting. `forget` and `reload` only work when you type them.
+- A command name written with quotes or a backslash (`\grep`, `"grep"`) is no longer assumed to be Claude Code's `.gitignore`-aware `grep`, so a recursive search written that way is held when it would reach a sensitive file.
+
 ## 0.1.1
 
 - A recursive `grep` or `rg` over a folder that holds sensitive files (`.env`, keys, credentials) is now held when the search would really reach them. Claude Code's own `grep` and `rg` honour `.gitignore`, so a plain `grep -r KEY .` no longer asks because of an ignored `.env`; `command grep`, `/usr/bin/grep`, `egrep`, `rg --no-ignore` and `rg -uu` still do. Excluding those files (`--exclude`, `-g '!…'`), limiting the search (`--include`) or listing only names (`-l`, `-c`) keeps it quiet.

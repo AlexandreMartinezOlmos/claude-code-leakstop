@@ -26,7 +26,7 @@ import * as say from './messages.ts'
 import type { WriteTool } from './messages.ts'
 import { decide, decideAll } from './policy.ts'
 import type { Action, Destination, Mode } from './policy.ts'
-import { USAGE, bannerLine, fit, historyRows, parseArgs, resolveIds, summaryText } from './ui.ts'
+import { USAGE, allowedText, bannerLine, fit, historyRows, mergeAllowed, parseArgs, resolveIds, summaryText } from './ui.ts'
 
 const { USE_ENV, ALLOW_ONCE, CANCEL, SHOW_NAMES, ADD_GITIGNORE } = say
 
@@ -139,8 +139,8 @@ async function rememberAllowOnce($: EngineInterface, fingerprints: readonly stri
   await $.state.set(allowOnceRef, [...new Set([...value, ...fingerprints])].slice(-MAX_ALLOW_ONCE))
 }
 
-/** Reads the project's `.leakstop.json` once, at session start. A missing file is not a problem; a bad one is reported and the defaults apply. */
-async function loadConfig($: EngineInterface): Promise<void> {
+/** Reads the project's `.leakstop.json` (at session start and on `/leakstop reload`). A missing file is not a problem; a bad one is reported and the defaults apply. */
+async function loadConfig($: EngineInterface): Promise<StoredConfig> {
   let config: StoredConfig = EMPTY_CONFIG
   let exists = false
   try {
@@ -157,7 +157,7 @@ async function loadConfig($: EngineInterface): Promise<void> {
     }
   }
   await $.state.set(configRef, config)
-  for (const warning of config.warnings.slice(0, 5)) $.ui.log(`LeakStop: .leakstop.json: ${warning}`)
+  return config
 }
 
 async function getConfig($: EngineInterface): Promise<StoredConfig> {
@@ -171,17 +171,37 @@ const customRules = (config: StoredConfig): Rule[] => config.customRules.map(toR
 /** Medium findings in a path the project told us to ignore are dropped; critical ones never are. */
 const isRelaxed = (config: StoredConfig, severity: string, path: string): boolean => severity === 'medium' && matchesAny(path, config.ignorePaths)
 
-/** Fingerprints allowed for this session, the ones the user allowed for good and the ones the project allows. */
-async function allowedFingerprints($: EngineInterface, config: StoredConfig): Promise<Set<string>> {
-  const { value: once = [] } = await $.state.get(allowOnceRef)
+/** What is allowed, by where it came from: this session, the user for good (the machine-wide store) and the project. */
+async function allowedSources($: EngineInterface, config: StoredConfig): Promise<{ session: string[]; forever: string[]; project: string[] }> {
+  const { value: session = [] } = await $.state.get(allowOnceRef)
   let stored: unknown
   try {
     stored = await $.store.get('allowFingerprints')
   } catch {
     stored = undefined
   }
-  const permanent = Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : []
-  return new Set([...once, ...permanent, ...config.allowFingerprints])
+  const forever = Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : []
+  return { session, forever, project: config.allowFingerprints }
+}
+
+/** Fingerprints allowed for this session, the ones the user allowed for good and the ones the project allows. */
+async function allowedFingerprints($: EngineInterface, config: StoredConfig): Promise<Set<string>> {
+  const { session, forever, project } = await allowedSources($, config)
+  return new Set([...session, ...forever, ...project])
+}
+
+/** Stops allowing `fingerprints` (every one of the user's when `undefined`); the project's own list is not touched. Returns what was removed. */
+async function forgetAllowed($: EngineInterface, fingerprints: readonly string[] | undefined): Promise<{ session: string[]; forever: string[] }> {
+  const { session, forever } = await allowedSources($, EMPTY_CONFIG)
+  const drop = (list: readonly string[]): string[] => (fingerprints === undefined ? [...list] : list.filter((f) => fingerprints.includes(f)))
+  const removed = { session: drop(session), forever: drop(forever) }
+  if (removed.session.length > 0) await $.state.set(allowOnceRef, session.filter((f) => !removed.session.includes(f)))
+  if (removed.forever.length > 0) {
+    const kept = forever.filter((f) => !removed.forever.includes(f))
+    if (kept.length > 0) await $.store.set('allowFingerprints', kept)
+    else await $.store.delete('allowFingerprints')
+  }
+  return removed
 }
 
 /** The user's answer, or `undefined` when nobody could answer (dismissed, `claude -p`, no interface). */
@@ -561,7 +581,8 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'leakstop', description: 'Show LeakStop findings, pause or resume protection, or allow a finding' })
-    await loadConfig($)
+    const config = await loadConfig($)
+    for (const warning of config.warnings.slice(0, 5)) $.ui.log(`LeakStop: .leakstop.json: ${warning}`)
     return next(e)
   })
 
@@ -590,6 +611,10 @@ export const register: Register = (on, options) => {
       return isShown ? {} : { text: summaryText(findings, paused, config.warnings) }
     }
     if (args.kind === 'usage') return { text: USAGE }
+    if (args.kind === 'allowed') {
+      const { session, forever, project } = await allowedSources($, config)
+      return { text: allowedText(mergeAllowed(session, forever, project), findings) }
+    }
 
     // Changing what LeakStop checks is the user's call. A command that did not
     // come from the person (a task, a peer session, another plugin) is refused.
@@ -603,6 +628,25 @@ export const register: Register = (on, options) => {
     if (args.kind === 'resume') {
       await setPaused($, false)
       return { text: 'LeakStop resumed.' }
+    }
+    if (args.kind === 'reload') {
+      const reloaded = await loadConfig($)
+      const parts = [`${reloaded.customRules.length} custom rule${reloaded.customRules.length === 1 ? '' : 's'}`, `${reloaded.ignorePaths.length} ignored path${reloaded.ignorePaths.length === 1 ? '' : 's'}`, `${reloaded.allowFingerprints.length} allowed fingerprint${reloaded.allowFingerprints.length === 1 ? '' : 's'}`]
+      const notes = reloaded.warnings.slice(0, 5).map((warning) => `.leakstop.json: ${warning}`)
+      return { text: [`LeakStop reloaded .leakstop.json: ${parts.join(', ')}.`, ...notes].join('\n') }
+    }
+    if (args.kind === 'forget') {
+      const isAll = args.ids.length === 1 && args.ids[0]?.toLowerCase() === 'all'
+      const { fingerprints, unknown } = isAll ? { fingerprints: undefined, unknown: [] as string[] } : resolveIds(args.ids, findings)
+      const removed = await forgetAllowed($, fingerprints)
+      const count = new Set([...removed.session, ...removed.forever]).size
+      const kept = (fingerprints ?? config.allowFingerprints).filter((f) => config.allowFingerprints.includes(f))
+      const done = count > 0 ? `Stopped allowing ${count} finding${count === 1 ? '' : 's'}: ${[...new Set([...removed.session, ...removed.forever])].join(' ')}.` : 'Nothing of yours was allowed, so nothing changed.'
+      const notes = [
+        ...(kept.length > 0 ? [`Still allowed by .leakstop.json (edit that file to remove): ${kept.join(' ')}.`] : []),
+        ...(unknown.length > 0 ? [`Not recognised: ${unknown.join(', ')}.`] : []),
+      ]
+      return { text: [done, ...notes, ...(unknown.length > 0 ? [USAGE] : [])].join('\n') }
     }
     const { fingerprints, unknown } = resolveIds(args.ids, findings)
     if (fingerprints.length > 0) await allowForever($, fingerprints)

@@ -19,7 +19,7 @@ function setup(on: any, config: unknown | undefined, extra: { git?: (argv: strin
   disk(on, files)
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
   on('command.register', (_$: any, e: any) => ({ value: { command: e.name } }))
-  return { env, asked }
+  return { env, asked, files }
 }
 
 const MEDIUM = (): string => `{"token": "${fakeJwt()}"}`
@@ -151,4 +151,45 @@ test('the project config cannot be edited by Claude, so it cannot widen its own 
   setup(on, { ignorePaths: ['docs/**'] })
   await start($)
   expect(isDenied(await write($, '.leakstop.json', JSON.stringify({ ignorePaths: ['**'] })))).toBe(true)
+})
+
+// --- /leakstop reload and forget with a project list ---------------------------------------
+
+const slash = ($: any, args: string) => $.command.run({ command: 'leakstop', args, origin: USER })
+
+test('reload reads .leakstop.json again and applies it', async ($, on) => {
+  const { files } = setup(on, undefined)
+  await start($)
+  const content = `export const x = "acme_${random(32)}"\n`
+  expect(ran(await write($, 'src/a.ts', content))).toBe(true)
+
+  files['.leakstop.json'] = JSON.stringify({ ignorePaths: ['tests/**'], customRules: [{ id: 'acme', regex: 'acme_[A-Za-z0-9]{32}', severity: 'critical' }] })
+  const result = await slash($, 'reload')
+  expect(result.text).toBe('LeakStop reloaded .leakstop.json: 1 custom rule, 1 ignored path, 0 allowed fingerprints.')
+  expect(isDenied(await write($, 'src/a.ts', content))).toBe(true)
+})
+
+test('reload reports a bad file and falls back to the defaults', async ($, on) => {
+  const { files } = setup(on, { ignorePaths: ['tests/**'] })
+  await start($)
+  files['.leakstop.json'] = '{ nope'
+  const result = await slash($, 'reload')
+  expect(result.text).toBe('LeakStop reloaded .leakstop.json: 0 custom rules, 0 ignored paths, 0 allowed fingerprints.\n.leakstop.json: .leakstop.json is not valid JSON, so the defaults apply')
+})
+
+test('reload with the file gone goes back to the defaults', async ($, on) => {
+  const { files } = setup(on, { allowFingerprints: ['sha256:aaaaaaaaaaaaaaaa'] })
+  await start($)
+  expect((await slash($, 'allowed')).text.includes('sha256:aaaaaaaaaaaaaaaa · .leakstop.json')).toBe(true)
+  delete files['.leakstop.json']
+  await slash($, 'reload')
+  expect((await slash($, 'allowed')).text).toBe('LeakStop · nothing is allowed: every finding is checked')
+})
+
+test('forget cannot remove what the project allows, and says so', async ($, on) => {
+  setup(on, { allowFingerprints: ['sha256:aaaaaaaaaaaaaaaa'] })
+  await start($)
+  const result = await slash($, 'forget sha256:aaaaaaaaaaaaaaaa')
+  expect(result.text).toBe('Nothing of yours was allowed, so nothing changed.\nStill allowed by .leakstop.json (edit that file to remove): sha256:aaaaaaaaaaaaaaaa.')
+  expect((await slash($, 'forget all')).text.includes('Still allowed by .leakstop.json')).toBe(true)
 })

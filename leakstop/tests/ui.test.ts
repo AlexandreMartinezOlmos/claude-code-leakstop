@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import type { StoredFinding } from '../types'
-import { USAGE, bannerLine, fit, formatTime, historyRows, parseArgs, resolveIds, summaryText, where } from '../hooks/ui.ts'
+import { USAGE, allowedText, bannerLine, fit, formatTime, historyRows, mergeAllowed, parseArgs, resolveIds, summaryText, where } from '../hooks/ui.ts'
 
 const finding = (over: Partial<StoredFinding> = {}): StoredFinding => ({
   fingerprint: 'sha256:0123456789abcdef',
@@ -95,4 +95,39 @@ test('resolves numbers and fingerprints, and reports what it does not know', () 
     unknown: [],
   })
   expect(resolveIds(['9', 'nonsense', '1', '1'], findings)).toEqual({ fingerprints: ['sha256:aaaaaaaaaaaaaaaa'], unknown: ['9', 'nonsense'] })
+})
+
+test('parses allowed, forget and reload', () => {
+  expect(parseArgs('allowed')).toEqual({ kind: 'allowed' })
+  expect(parseArgs('list')).toEqual({ kind: 'allowed' })
+  expect(parseArgs('forget 2 sha256:0123456789abcdef')).toEqual({ kind: 'forget', ids: ['2', 'sha256:0123456789abcdef'] })
+  expect(parseArgs('forget all')).toEqual({ kind: 'forget', ids: ['all'] })
+  expect(parseArgs('reload')).toEqual({ kind: 'reload' })
+  for (const bad of ['forget', 'allowed 1', 'reload now', 'list all']) expect(parseArgs(bad)).toEqual({ kind: 'usage' })
+  for (const word of ['allowed', 'forget', 'reload']) expect(USAGE.includes(`/leakstop ${word}`)).toBe(true)
+})
+
+test('merges where each allowed fingerprint came from, and says what the history knows about it', () => {
+  const a = 'sha256:aaaaaaaaaaaaaaaa'
+  const b = 'sha256:bbbbbbbbbbbbbbbb'
+  const c = 'sha256:cccccccccccccccc'
+  expect(mergeAllowed([a], [a, b], [c])).toEqual([
+    { fingerprint: a, sources: ['forever', 'session'] },
+    { fingerprint: b, sources: ['forever'] },
+    { fingerprint: c, sources: ['project'] },
+  ])
+  const text = allowedText(mergeAllowed([a], [b], [c]), [finding({ fingerprint: a, label: 'GitHub token', path: 'src/a.ts', line: 3 })])
+  expect(text.startsWith('LeakStop · 3 allowed')).toBe(true)
+  expect(text.includes(`${a} · this session · GitHub token · src/a.ts:3`)).toBe(true)
+  expect(text.includes(`${b} · for good\n`)).toBe(true)
+  expect(text.includes(`${c} · .leakstop.json`)).toBe(true)
+  expect(text.includes('Fingerprints from .leakstop.json are removed by editing that file.')).toBe(true)
+  expect(allowedText([], [])).toBe('LeakStop · nothing is allowed: every finding is checked')
+})
+
+test('a long list of allowed fingerprints is cut', () => {
+  const many = Array.from({ length: 40 }, (_, i) => `sha256:${String(i).padStart(16, '0')}`)
+  const text = allowedText(mergeAllowed([], many, []), [])
+  expect(text.includes('…and 15 more')).toBe(true)
+  expect(text.split('\n').length).toBe(1 + 25 + 1 + 1)
 })
