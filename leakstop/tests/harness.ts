@@ -165,6 +165,10 @@ export function storeKV(on: any, initial: Record<string, unknown> = {}): Record<
     data[e.key] = e.value
     return { value: undefined }
   })
+  on('store.delete', (_$: any, e: any) => {
+    delete data[e.key]
+    return { value: undefined }
+  })
   return data
 }
 

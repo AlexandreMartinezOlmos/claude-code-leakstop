@@ -70,8 +70,11 @@ Placeholders (`your-api-key`, `changeme`, `<TOKEN>`), Amazon's documentation exa
 | `/leakstop pause` | Stops checking until you resume. Changes to `.leakstop.json` are still held. A banner reminds you it is paused |
 | `/leakstop resume` | Starts checking again |
 | `/leakstop allow 3` | Allows finding number 3 from the history **for good**, on this machine. You can also give the `sha256:…` fingerprint shown in a block message |
+| `/leakstop allowed` | Lists everything that is allowed and where each came from: this session (*Allow once*), for good (`/leakstop allow`) or `.leakstop.json`. Each row shows the fingerprint and, when the history knows it, the type and place, never the secret |
+| `/leakstop forget 3` | Stops allowing finding number 3 (or a `sha256:…` fingerprint). `/leakstop forget all` drops everything you allowed, for good and for this session. What `.leakstop.json` allows is removed by editing that file |
+| `/leakstop reload` | Reads `.leakstop.json` again, so an edit applies without restarting, and says what it found |
 
-`pause`, `resume` and `allow` only work when **you** type them. If Claude, another session or another plugin tries to run them, LeakStop refuses.
+`pause`, `resume`, `allow`, `forget` and `reload` only work when **you** type them. If Claude, another session or another plugin tries to run them, LeakStop refuses. `/leakstop allowed` only reads, so it works from anywhere.
 
 ### Protection level
 
@@ -169,9 +172,9 @@ Claude Code mods are still an early-access feature and their interface can chang
 ## Troubleshooting
 
 - **I installed it but see nothing.** That is normal until something looks dangerous. Open `/plugin` to confirm it is active, then run `/leakstop` to see whether it has recorded anything.
-- **It holds something that is fine.** Choose *Allow once*, or run `/leakstop allow <number>` to allow that exact finding for good. For a whole folder of test data, use `ignorePaths`.
+- **It holds something that is fine.** Choose *Allow once*, or run `/leakstop allow <number>` to allow that exact finding for good (and `/leakstop forget` to take it back). For a whole folder of test data, use `ignorePaths`.
 - **I want to try it without risk.** Switch to `monitor` mode: it only warns and logs, and `/leakstop` shows what it would have held.
-- **It says `.leakstop.json` has a problem.** The message says what was ignored and why. Fix the file and run `/reload-plugins`.
+- **It says `.leakstop.json` has a problem.** The message says what was ignored and why. Fix the file and run `/leakstop reload` (or `/reload-plugins`).
 
 ## Development
 

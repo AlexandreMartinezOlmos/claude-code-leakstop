@@ -137,6 +137,77 @@ test('allow by the fingerprint the block message shows', async ($, on) => {
   expect(store.allowFingerprints).toEqual(['sha256:ffffffffffffffff'])
 })
 
+// --- /leakstop allowed, forget and reload ---------------------------------------------------
+
+test('allowed says what is allowed and where each came from, without values', async ($, on) => {
+  setup(on)
+  const secret = token()
+  const content = `export const apiKey = "${secret}"\n`
+  expect((await slash($, 'allowed')).text).toBe('LeakStop · nothing is allowed: every finding is checked')
+  expect(isDenied(await write($, 'src/config.ts', content))).toBe(true)
+  await slash($, 'allow 1')
+  const text = (await slash($, 'allowed')).text
+  expect(text.startsWith('LeakStop · 1 allowed')).toBe(true)
+  expect(text.includes('· for good · Anthropic API key · src/config.ts:1')).toBe(true)
+  expect(text.includes(secret.slice(14))).toBe(false)
+})
+
+test('allowed also lists what was allowed once, and anyone may ask', async ($, on) => {
+  setup(on, { answer: 'Allow once' })
+  expect(ran(await write($, 'src/config.ts', `export const apiKey = "${token()}"\n`))).toBe(true)
+  const text = (await slash($, 'allowed', { kind: 'task-notification' })).text
+  expect(text.includes('· this session · Anthropic API key')).toBe(true)
+})
+
+test('forget by history number stops allowing that finding, and it is held again', async ($, on) => {
+  const { store } = setup(on)
+  const content = `export const apiKey = "${token()}"\n`
+  await write($, 'src/config.ts', content)
+  await slash($, 'allow 1')
+  expect(ran(await write($, 'src/config.ts', content))).toBe(true)
+
+  const result = await slash($, 'forget 1')
+  expect(result.text.startsWith('Stopped allowing 1 finding: sha256:')).toBe(true)
+  expect(store.allowFingerprints).toBe(undefined)
+  expect(isDenied(await write($, 'src/config.ts', content))).toBe(true)
+})
+
+test('forget keeps the others, and says what it did not know', async ($, on) => {
+  const { store } = setup(on)
+  await slash($, 'allow sha256:aaaaaaaaaaaaaaaa sha256:bbbbbbbbbbbbbbbb')
+  const result = await slash($, 'forget sha256:aaaaaaaaaaaaaaaa 77 sha256:cccccccccccccccc')
+  expect(store.allowFingerprints).toEqual(['sha256:bbbbbbbbbbbbbbbb'])
+  const [first, second] = result.text.split('\n')
+  expect(first).toBe('Stopped allowing 1 finding: sha256:aaaaaaaaaaaaaaaa.')
+  expect(second).toBe('Not recognised: 77.')
+  // A well-formed fingerprint that was never allowed is not an error, it just changes nothing.
+  expect((await slash($, 'forget sha256:dddddddddddddddd')).text).toBe('Nothing of yours was allowed, so nothing changed.')
+})
+
+test('forget all drops everything the user allowed, for good and for the session', async ($, on) => {
+  const { store } = setup(on, { answer: 'Allow once' })
+  const content = `export const apiKey = "${token()}"\n`
+  expect(ran(await write($, 'src/config.ts', content))).toBe(true)
+  await slash($, 'allow sha256:aaaaaaaaaaaaaaaa')
+  expect((await slash($, 'allowed')).text.startsWith('LeakStop · 2 allowed')).toBe(true)
+
+  const result = await slash($, 'forget all')
+  expect(result.text.startsWith('Stopped allowing 2 findings:')).toBe(true)
+  expect(store.allowFingerprints).toBe(undefined)
+  expect((await slash($, 'allowed')).text).toBe('LeakStop · nothing is allowed: every finding is checked')
+})
+
+test('only the person can forget or reload', async ($, on) => {
+  const { store } = setup(on)
+  await slash($, 'allow sha256:aaaaaaaaaaaaaaaa')
+  for (const origin of [{ kind: 'sdk' }, { kind: 'task-notification' }, { kind: 'peer' }, null]) {
+    for (const args of ['forget all', 'forget sha256:aaaaaaaaaaaaaaaa', 'reload']) {
+      expect((await slash($, args, origin)).text.includes('only works when you type it yourself')).toBe(true)
+    }
+  }
+  expect(store.allowFingerprints).toEqual(['sha256:aaaaaaaaaaaaaaaa'])
+})
+
 // --- The banner --------------------------------------------------------------------------
 
 for (const surface of SURFACES) {
