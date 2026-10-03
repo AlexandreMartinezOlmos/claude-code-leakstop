@@ -56,7 +56,7 @@ test('the question and the history say where the secret is, with no line number 
   const env = toolsRun(on)
   const asked = answerWith(on, CANCEL)
   await call($, { tool: 'mcp__docs__batch', batch: [{ op: 'set', payload: `key ${token()}` }] })
-  expect(asked.questions[0]?.includes('Anthropic API key in MCP docs/batch → MCP docs/batch › batch[0].payload')).toBe(true)
+  expect(asked.questions[0]?.includes('Anthropic API key in MCP docs/batch → batch[0].payload\n')).toBe(true)
   expect(asked.questions[0]?.includes('to the MCP server docs')).toBe(true)
   const [finding] = env.findings()
   expect(finding).toMatchObject({ tool: 'mcp__docs__batch', path: 'MCP docs/batch › batch[0].payload', line: 0, decision: 'denied', severity: 'critical' })

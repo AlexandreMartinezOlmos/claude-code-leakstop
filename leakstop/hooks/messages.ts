@@ -254,7 +254,9 @@ export function outboundDeny(tool: string, findings: readonly Located[]): string
 export function outboundQuestion(tool: string, findings: readonly Located[]): string {
   const severity = findings.some((f) => f.severity === 'critical') ? 'CRITICAL' : 'MEDIUM'
   const lines = [`LeakStop · ${severity}`]
-  for (const finding of findings.slice(0, 3)) lines.push(`${finding.label} in ${toolLabel(tool)} → ${finding.path}`, `  ${finding.masked}`)
+  // The tool is already named: "in Agent → prompt", not "in Agent → Agent › prompt".
+  const own = `${toolLabel(tool)} › `
+  for (const finding of findings.slice(0, 3)) lines.push(`${finding.label} in ${toolLabel(tool)} → ${finding.path.startsWith(own) ? finding.path.slice(own.length) : finding.path}`, `  ${finding.masked}`)
   if (findings.length > 3) lines.push(`  …and ${findings.length - 3} more`)
   lines.push(`This call would send it ${destinationOf(tool)}.`, '', 'How do you want to handle it?')
   return lines.join('\n')
