@@ -10,7 +10,7 @@ First stable release. Requires Claude Code 2.1.287 or later.
 - A new README: installation inside Claude Code, from the terminal, for a team (project scope) and for an organisation; updating and uninstalling; a one-minute way to see it work; the list of sensitive files; troubleshooting.
 - `/leakstop list` is documented as the other name of `/leakstop allowed`.
 - Added `SECURITY.md` (how to report a vulnerability and what counts as one), `PRIVACY.md` (what LeakStop keeps and where), `CONTRIBUTING.md`, issue forms and a pull request template.
-- Every change is now checked by CI: the plugin validation with `--strict`, the marketplace validation and the 318 tests, on Linux and macOS, with Claude Code 2.1.287 (the oldest supported) and the newest; plus a check that the version, the changelog, the licence and the descriptions agree and that no secret is in the repository.
+- Every change is now checked by CI: the plugin validation with `--strict`, the marketplace validation and the test suite, on Linux and macOS, with Claude Code 2.1.287 (the oldest supported) and the newest; plus a check that the version, the changelog, the licence and the descriptions agree and that no secret is in the repository.
 - The manifest now carries the metadata that Anthropic's directory reads (display name, keywords, documentation, support and privacy links), and the installed plugin ships its own copy of the licence.
 - `scripts/calibrate.ts` accepts `--check`, which makes it exit with an error when it flags anything.
 

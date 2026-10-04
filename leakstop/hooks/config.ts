@@ -25,7 +25,7 @@ export const EMPTY_CONFIG: StoredConfig = { ignorePaths: [], allowFingerprints: 
 // --- Globs for ignorePaths -------------------------------------------------
 
 /**
- * `tests/fixtures/**`, `*.json`, `docs/`. A pattern with no slash matches at any
+ * `tests/fixtures/**`, `*.json`, `examples/`. A pattern with no slash matches at any
  * depth, as in .gitignore; `**` crosses folders, `*` and `?` do not.
  */
 export function globToRegExp(glob: string): RegExp | undefined {
