@@ -2,6 +2,13 @@
 
 All notable changes to LeakStop. It follows [semantic versioning](https://semver.org); see "Stability and versioning" in the README for what is part of the public interface.
 
+## 1.0.1 - 2026-10-04
+
+Documentation only. No change to what LeakStop detects or how it decides.
+
+- The README now opens with a recording of a real Claude Code session: LeakStop holds a read of `.env`, the choice is Cancel, and `/leakstop` lists the finding.
+- Added an icon (`assets/icon.svg` and a 512 pixel PNG) and a 1280x640 social preview image in `assets/`.
+
 ## 1.0.0 - 2026-10-04
 
 First stable release. Requires Claude Code 2.1.287 or later.
@@ -49,7 +56,8 @@ First release. Requires Claude Code 2.1.287 or later.
 
 Not in this release: redacting secrets pasted into the prompt, and redacting the result of a read.
 
-[Unreleased]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.0.0...develop
+[Unreleased]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.0.1...develop
+[1.0.1]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v0.1.0...v0.1.1
