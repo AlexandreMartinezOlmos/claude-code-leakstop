@@ -276,7 +276,7 @@ LeakStop is a safety net, not a wall. Please read this part.
 
 ## Contributing
 
-Bug reports, false positives and new detection rules are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) for how to set it up, the checks that must pass and the rules for changes. To see what the detector would flag in your own repositories (read-only; it prints rule, place, length and the line with the value hidden, never the value), clone this repository and run `node scripts/calibrate.ts <folder> [...]` with Node 24 or later.
+Bug reports, false positives and new detection rules are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) for how to set it up, the checks that must pass and the rules for changes. Everyone taking part is expected to follow the [code of conduct](CODE_OF_CONDUCT.md). To see what the detector would flag in your own repositories (read-only; it prints rule, place, length and the line with the value hidden, never the value), clone this repository and run `node scripts/calibrate.ts <folder> [...]` with Node 24 or later.
 
 ## License
 

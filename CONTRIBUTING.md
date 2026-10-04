@@ -1,6 +1,6 @@
 # Contributing to LeakStop
 
-Thanks for helping. Bug reports, false positives and new detection rules are all welcome.
+Thanks for helping. Bug reports, false positives and new detection rules are all welcome. By taking part you agree to the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Before you start
 
