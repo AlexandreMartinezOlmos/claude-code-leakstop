@@ -1,0 +1,6 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="LeakStop: a shield with a keyhole">
+  <rect width="512" height="512" fill="#0E0F12"/>
+  <path d="M256 96 L396 146 V254 C396 336 338 398 256 428 C174 398 116 336 116 254 V146 Z" fill="#FF6A3D"/>
+  <circle cx="256" cy="236" r="32" fill="#0E0F12"/>
+  <path d="M242 254 H270 L282 322 H230 Z" fill="#0E0F12"/>
+</svg>
