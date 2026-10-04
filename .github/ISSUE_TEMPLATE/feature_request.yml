@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest something LeakStop should do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What leaks, or nearly leaks, today, and how. A real situation helps more than a general idea.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you would like LeakStop to do
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do now instead
+      description: Claude Code permission rules, a pre-commit scanner, a custom rule in `.leakstop.json`...
+  - type: markdown
+    attributes:
+      value: |
+        LeakStop stays local: no network, no model and no environment access. Ideas that need one of those will not fit.

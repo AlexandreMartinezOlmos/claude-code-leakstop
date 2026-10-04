@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # LeakStop is a Claude Code mod: it is checked by Claude Code itself. The
+  # oldest supported version and the newest one both have to pass.
+  claude-code:
+    name: Claude Code ${{ matrix.claude }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        claude: ['2.1.287', latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Install Claude Code
+        run: npm install --global @anthropic-ai/claude-code@${{ matrix.claude }}
+      - run: claude --version
+      - name: Validate the plugin
+        run: claude plugin validate ./leakstop --strict
+      - name: Validate the marketplace
+        run: claude plugin validate .
+      - name: Test the plugin
+        working-directory: leakstop
+        run: claude plugin test
+
+  repository:
+    name: Repository checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Versions, changelog and licence agree
+        run: node scripts/check-release.ts
+      - name: No secret in the repository
+        run: node scripts/calibrate.ts --check .

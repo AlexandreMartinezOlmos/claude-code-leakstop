@@ -1,0 +1,66 @@
+name: Bug report
+description: LeakStop did something it should not, or did not do something it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste a real secret.** Describe its shape instead, for example "`ghp_` followed by 36 letters and digits".
+        Found a security problem? Do not use this form: see [SECURITY.md](https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/blob/main/SECURITY.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what LeakStop did, and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The prompt, the command or the file content that triggers it, with any secret replaced by a fake one.
+    validations:
+      required: true
+  - type: input
+    id: leakstop
+    attributes:
+      label: LeakStop version
+      description: Shown in `/plugin`, or run `claude plugin list`.
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: input
+    id: claude
+    attributes:
+      label: Claude Code version
+      description: Run `claude --version`.
+      placeholder: "2.1.289"
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where you use Claude Code
+      options:
+        - Terminal
+        - Desktop app
+        - VS Code
+        - claude -p / Agent SDK
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Protection mode
+      options:
+        - standard (default)
+        - strict
+        - monitor
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: The output of `/leakstop`, your `.leakstop.json` (without secrets), the operating system.
