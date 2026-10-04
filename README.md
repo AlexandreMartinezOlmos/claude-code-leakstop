@@ -10,6 +10,10 @@ When an AI agent works in your terminal it can, without meaning to, copy an API 
 
 It runs entirely on your machine. No network, no AI model, no accounts. It never reads your environment variables, and it never shows or stores a full secret: only a short prefix and the last three characters.
 
+![A recording of Claude Code asked to show .env: LeakStop holds the read, the user chooses Cancel, Claude explains it did not read the file, and /leakstop lists the finding.](assets/demo.gif)
+
+That is a real session: Claude is asked to show a `.env` file, LeakStop holds the read, and the choice is **Cancel**. A write that would put a secret into your code looks like this:
+
 ```
 LeakStop · CRITICAL
 Anthropic API key in Write → src/config.ts:12
