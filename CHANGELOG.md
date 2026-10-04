@@ -2,6 +2,13 @@
 
 All notable changes to LeakStop. It follows [semantic versioning](https://semver.org); see "Stability and versioning" in the README for what is part of the public interface.
 
+## 1.0.2 - 2026-10-04
+
+Documentation only. No change to what LeakStop detects or how it decides.
+
+- The plugin folder now has its own `README.md`, so the installed plugin ships a description of what it does, its protection levels and its privacy, and Anthropic's directory can read it.
+- `scripts/check-release.ts` checks that this README exists, has enough text and states the same minimum Claude Code version.
+
 ## 1.0.1 - 2026-10-04
 
 Documentation only. No change to what LeakStop detects or how it decides.
@@ -56,7 +63,8 @@ First release. Requires Claude Code 2.1.287 or later.
 
 Not in this release: redacting secrets pasted into the prompt, and redacting the result of a read.
 
-[Unreleased]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.0.1...develop
+[Unreleased]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.0.2...develop
+[1.0.2]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v0.1.1...v0.2.0
