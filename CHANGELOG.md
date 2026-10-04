@@ -2,6 +2,17 @@
 
 All notable changes to LeakStop. It follows [semantic versioning](https://semver.org); see "Stability and versioning" in the README for what is part of the public interface.
 
+## 1.0.2 - 2026-10-04
+
+Documentation only. No change to what LeakStop detects or how it decides.
+
+- The plugin folder now has its own `README.md`, so the installed plugin ships a description of what it does, its protection levels and its privacy, and Anthropic's directory can read it.
+- The plugin README now says what the mod runs (`git` and `find`, read-only), that it sends nothing anywhere, which hooks it uses and the one case in which it rewrites a command (**Show names only**), as the directory asks. It also explains that the test files and the detector only contain fake credentials and patterns to look for, which the directory's scan reads as a credential going to a server.
+- `userConfig.mode` no longer lists its `options` in the manifest, because Anthropic's directory does not accept that key yet. Nothing changes in behaviour: any value other than `monitor` or `strict` already meant `standard`, and the description names the three values.
+- Added the plugin icon (`.claude-plugin/icon.png`).
+- A test no longer spells out a command that downloads and runs something, which the directory flags as an install-time risk.
+- `scripts/check-release.ts` checks that this README exists, has enough text and states the same minimum Claude Code version.
+
 ## 1.0.1 - 2026-10-04
 
 Documentation only. No change to what LeakStop detects or how it decides.
@@ -56,7 +67,8 @@ First release. Requires Claude Code 2.1.287 or later.
 
 Not in this release: redacting secrets pasted into the prompt, and redacting the result of a read.
 
-[Unreleased]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.0.1...develop
+[Unreleased]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.0.2...develop
+[1.0.2]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v0.1.1...v0.2.0
