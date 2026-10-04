@@ -34,6 +34,11 @@ const minimum = /Claude Code (\d+\.\d+\.\d+) or later/.exec(readme)?.[1]
 if (minimum === undefined) problems.push('README.md does not state the minimum Claude Code version')
 else if (!changelog.includes(`Requires Claude Code ${minimum} or later`)) problems.push(`CHANGELOG.md never says "Requires Claude Code ${minimum} or later" (the README minimum)`)
 
+// The plugin folder is what gets installed and what the directory reads, so it carries its own README.
+const pluginReadme = read('leakstop/README.md')
+if (pluginReadme.replace(/```[\s\S]*?```/g, '').split(/\s+/).filter(Boolean).length < 40) problems.push('leakstop/README.md has fewer than 40 words outside code blocks (the directory requires a README in the plugin folder)')
+if (minimum !== undefined && !pluginReadme.includes(`Claude Code ${minimum} or later`)) problems.push(`leakstop/README.md does not state the minimum Claude Code version ${minimum}`)
+
 for (const line of problems) console.error(`✘ ${line}`)
 if (problems.length > 0) process.exit(1)
 console.log(`✔ release ${plugin.version} is consistent`)
