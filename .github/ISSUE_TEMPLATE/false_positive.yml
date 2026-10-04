@@ -1,0 +1,47 @@
+name: False positive or missed secret
+description: LeakStop held something harmless, or let a real kind of secret through.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste a real secret.** Replace it with a fake value of the same shape.
+        A secret that is encoded, split across variables or built by a script is a [known limit](https://github.com/AlexandreMartinezOlmos/claude-code-leakstop#limitations), not a bug.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What went wrong
+      options:
+        - It held or warned about something that is fine (false positive)
+        - It let a secret through that it should have caught (missed secret)
+    validations:
+      required: true
+  - type: input
+    id: rule
+    attributes:
+      label: Which finding
+      description: The name in the question or banner (for example "Hard-coded credential"), or the kind of secret you expected it to find.
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: A fake example with the same shape
+      description: The line, the command or the tool call, with the value replaced by random characters of the same length and alphabet.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: where
+    attributes:
+      label: Where it happens
+      description: The tool (Write, Edit, Bash, Read, an outbound tool), the file name and the kind of project.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: LeakStop and Claude Code versions
+      placeholder: "LeakStop 1.0.0, Claude Code 2.1.289"
+    validations:
+      required: true

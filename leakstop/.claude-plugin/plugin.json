@@ -1,6 +1,7 @@
 {
   "name": "leakstop",
-  "version": "0.2.0",
+  "displayName": "LeakStop",
+  "version": "1.0.0",
   "description": "Stops secrets from leaking before they are written, printed or committed to git.",
   "author": {
     "name": "AlexandreMartinezOlmos",
@@ -9,6 +10,17 @@
   "license": "MIT",
   "homepage": "https://github.com/AlexandreMartinezOlmos/claude-code-leakstop",
   "repository": "https://github.com/AlexandreMartinezOlmos/claude-code-leakstop",
+  "documentationUrl": "https://github.com/AlexandreMartinezOlmos/claude-code-leakstop#readme",
+  "supportUrl": "https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/issues",
+  "privacyPolicyUrl": "https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/blob/main/PRIVACY.md",
+  "keywords": [
+    "security",
+    "secrets",
+    "leak-prevention",
+    "api-keys",
+    "git",
+    "mod"
+  ],
   "types": "./types/index.d.ts",
   "userConfig": {
     "mode": {

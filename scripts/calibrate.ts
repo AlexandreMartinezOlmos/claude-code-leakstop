@@ -3,9 +3,11 @@
 // Read-only. Never prints a secret: only the rule, the place, the value's length
 // and entropy, and the line of code with the value replaced.
 //
-//   node scripts/calibrate.ts <repo or folder> [...]
+//   node scripts/calibrate.ts [--check] <repo or folder> [...]
 //
 // A git repository is read through `git ls-files`; any other folder is walked.
+// With `--check` the exit code is 1 when anything is flagged (used by CI to make
+// sure this repository never carries a real-looking secret).
 
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
@@ -32,7 +34,9 @@ let files = 0
 let bytes = 0
 let elapsed = 0
 
-for (const repo of process.argv.slice(2)) {
+const isCheck = process.argv.includes('--check')
+
+for (const repo of process.argv.slice(2).filter((arg) => arg !== '--check')) {
   const listed = existsSync(join(repo, '.git'))
     ? execFileSync('git', ['-C', repo, 'ls-files', '-z'], { maxBuffer: 256 * 1024 * 1024 }).toString().split('\0').filter(Boolean)
     : walk(repo)
@@ -71,3 +75,4 @@ for (const repo of process.argv.slice(2)) {
 console.log(`scanned ${files} files, ${(bytes / 1024 / 1024).toFixed(1)} MiB, in ${elapsed.toFixed(0)} ms`)
 console.log('findings by rule:', Object.fromEntries([...byRule].sort((a, b) => b[1] - a[1])))
 for (const row of rows) console.log(row)
+if (isCheck && rows.length > 0) process.exitCode = 1
