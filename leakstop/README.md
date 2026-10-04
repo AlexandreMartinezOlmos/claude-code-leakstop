@@ -61,6 +61,13 @@ Nothing. LeakStop has no network access, does not call a model and sends no data
 
 It never reads your environment variables or any credential from your machine. Names such as `GITHUB_TOKEN` appear only inside the advice it gives Claude ("read the value from an environment variable instead").
 
+## Test fixtures and detection patterns
+
+The `tests` folder and the detector contain text that looks like a credential sent to a server, and it is not one:
+
+- The tests build fake secrets at run time and put them in example commands and tool inputs, next to made-up hosts such as `api.example.org` and `example.com`, and next to variable names such as `ANTHROPIC_API_KEY`, to check that LeakStop holds them. The plugin never executes those strings.
+- `hooks/commands.ts` and `hooks/detect.ts` recognise commands such as `python -c` and `node -e`, and names such as `TOKEN` or `.npmrc`, as patterns to look for in the text of a command. They only read the text. LeakStop never runs that code, never reads the value of an environment variable and never sends anything out.
+
 ## Privacy and trust
 
 LeakStop collects nothing and sends nothing. It has no network, model or environment access, and `claude plugin validate --strict` lists every capability its code uses so you can check that yourself. It is open source under the MIT licence, and everything it needs is readable plain code in the `hooks` folder of this plugin.
