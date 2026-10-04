@@ -27,11 +27,6 @@
       "type": "string",
       "title": "Protection mode",
       "description": "monitor only warns and logs; standard holds critical findings; strict also holds medium findings and blocks reads of sensitive files.",
-      "options": [
-        "monitor",
-        "standard",
-        "strict"
-      ],
       "default": "standard"
     }
   }

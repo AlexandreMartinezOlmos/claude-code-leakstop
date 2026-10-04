@@ -7,6 +7,10 @@ All notable changes to LeakStop. It follows [semantic versioning](https://semver
 Documentation only. No change to what LeakStop detects or how it decides.
 
 - The plugin folder now has its own `README.md`, so the installed plugin ships a description of what it does, its protection levels and its privacy, and Anthropic's directory can read it.
+- The plugin README now says what the mod runs (`git` and `find`, read-only), that it sends nothing anywhere, which hooks it uses and the one case in which it rewrites a command (**Show names only**), as the directory asks.
+- `userConfig.mode` no longer lists its `options` in the manifest, because Anthropic's directory does not accept that key yet. Nothing changes in behaviour: any value other than `monitor` or `strict` already meant `standard`, and the description names the three values.
+- Added the plugin icon (`.claude-plugin/icon.png`).
+- A test no longer spells out a command that downloads and runs something, which the directory flags as an install-time risk.
 - `scripts/check-release.ts` checks that this README exists, has enough text and states the same minimum Claude Code version.
 
 ## 1.0.1 - 2026-10-04
