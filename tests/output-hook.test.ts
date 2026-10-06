@@ -7,7 +7,7 @@ const token = (rule = 'anthropic-key'): string => PROVIDER_TOKENS[rule]?.() ?? '
 const SAVED = '/home/dev/.claude/projects/app/session/tool-results/out.txt'
 
 /** An engine whose tools answer with results shaped like the real ones. */
-function engine(on: any, results: { bash?: any; read?: any; mcp?: any }, options: { disk?: Record<string, string>; noClock?: boolean } = {}) {
+function engine(on: any, results: { bash?: any; read?: any; mcp?: any }, options: { disk?: Record<string, string>; links?: string[]; noClock?: boolean } = {}) {
   const written: Record<string, any> = {}
   const logs: string[] = []
   const runs: string[] = []
@@ -26,6 +26,10 @@ function engine(on: any, results: { bash?: any; read?: any; mcp?: any }, options
   on('fs.read', (_$: any, e: any) => {
     if (!(e.path in disk)) throw new Error('ENOENT')
     return { value: disk[e.path] }
+  })
+  on('fs.stat', (_$: any, e: any) => {
+    if (!(e.path in disk)) throw new Error('ENOENT')
+    return { value: { kind: 'file', size: disk[e.path]?.length ?? 0, mtimeMs: 0, isLink: (options.links ?? []).includes(e.path) } }
   })
   on('fs.write', (_$: any, e: any) => {
     disk[e.path] = e.text
@@ -197,4 +201,23 @@ test('a Write with masked-looking text over a file that holds no such secret goe
   on('tool.call', { tool: 'Write' }, () => ({ result: 'ok' }))
   const r = await $.tool.call({ tool: 'Write', file_path: '/work/app/notes.md', content: 'LeakStop shows keys as ghp_••••••abc\n' })
   expect(r.result).toBe('ok')
+})
+
+test('a saved output outside a tool-results folder is never rewritten', async ($, on) => {
+  const secret = token('aws-access-key')
+  const content = `aws_access_key_id = ${secret}\n`
+  const elsewhere = '/work/app/.env'
+  const env = engine(on, { bash: bashResult('x', { persistedOutputPath: elsewhere }) }, { disk: { [elsewhere]: content } })
+  await $.tool.call({ tool: 'Bash', command: 'make logs' })
+  expect(env.disk[elsewhere]).toBe(content)
+  expect(env.logs.some((l: string) => l.includes('could not be checked'))).toBe(true)
+})
+
+test('a saved output that is a symbolic link is not rewritten', async ($, on) => {
+  const secret = token('aws-access-key')
+  const content = `aws_access_key_id = ${secret}\n`
+  const linked = '/home/dev/.claude/projects/app/session/tool-results/link.txt'
+  const env = engine(on, { bash: bashResult('x', { persistedOutputPath: linked }) }, { disk: { [linked]: content }, links: [linked] })
+  await $.tool.call({ tool: 'Bash', command: 'make logs' })
+  expect(env.disk[linked]).toBe(content)
 })
