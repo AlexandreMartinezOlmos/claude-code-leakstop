@@ -447,6 +447,46 @@ function gitOps(segments: readonly Segment[]): GitOp[] {
   return ops
 }
 
+/**
+ * `git` subcommands that print what a file holds or held: a blob, a patch or annotated lines.
+ * `git diff` is left out: on an ignored or untracked `.env`, the usual case, it prints nothing.
+ */
+const GIT_PRINTERS = new Set(['show', 'cat-file', 'blame', 'grep'])
+/** `git log` prints file contents only with a patch. */
+const GIT_LOG_PATCH = /^(?:-p|-u|--patch|--patch-with-stat|--patch-with-raw|-L.*|--full-diff)$/
+
+/**
+ * Sensitive files a `git` command prints from history or the index: `git show HEAD:.env`,
+ * `git cat-file -p main:.env`, `git log -p -- .env`.
+ */
+function gitPrintedFiles(args: readonly string[]): string[] {
+  let i = 0
+  while (i < args.length && isFlag(args[i] as string)) i += ['-C', '-c', '--git-dir', '--work-tree'].includes(args[i] as string) ? 2 : 1
+  const sub = args[i]
+  const rest = args.slice(i + 1)
+  if (sub === undefined || !(GIT_PRINTERS.has(sub) || (sub === 'log' && rest.some((a) => GIT_LOG_PATCH.test(a))))) return []
+  const files: string[] = []
+  for (const word of operands(rest)) {
+    // `<rev>:<path>` or `:<path>` (the index); a bare word is a path or a revision.
+    const colon = word.indexOf(':')
+    const path = colon >= 0 && !word.includes('://') ? word.slice(colon + 1) : word
+    if (path !== '' && isSensitiveOperand(path)) files.push(path)
+  }
+  return files
+}
+
+/** The name patterns a `find` matches and the program its `-exec` runs, if any. */
+function findFacts(args: readonly string[]): { patterns: string[]; runs?: string } {
+  const patterns: string[] = []
+  let runs: string | undefined
+  for (let i = 0; i < args.length; i++) {
+    const word = args[i] as string
+    if (['-name', '-iname', '-path', '-ipath', '-wholename', '-iwholename'].includes(word) && args[i + 1] !== undefined) patterns.push(args[++i] as string)
+    else if (['-exec', '-execdir', '-ok', '-okdir'].includes(word) && args[i + 1] !== undefined && runs === undefined) runs = programOf(args.slice(i + 1)).name
+  }
+  return runs === undefined ? { patterns } : { patterns, runs }
+}
+
 const dedupe = <T>(items: readonly T[]): T[] => {
   const seen = new Set<string>()
   return items.filter((item) => {
@@ -503,6 +543,21 @@ function analyzeSegments(command: string, segments: readonly Segment[], depth: n
       for (const file of operands(args)) {
         if (/^\/proc\/[^/]+\/environ$/.test(file)) isEnvDump = true
         else if (isSensitiveOperand(file)) readFiles.push(file)
+      }
+    } else if (name === 'git') {
+      readFiles.push(...gitPrintedFiles(args))
+    } else if (name === 'find') {
+      const { patterns, runs } = findFacts(args)
+      if (runs !== undefined && VIEWERS.has(runs)) readFiles.push(...patterns.filter(isSensitiveOperand))
+    } else if (name === 'xargs') {
+      // `find -name .env | xargs cat`: the files come from a `find` earlier in the same pipeline.
+      const runs = programOf(args.filter((a) => !isFlag(a))).name
+      if (VIEWERS.has(runs)) {
+        for (const other of segments) {
+          if (other === segment || other.pipeline !== segment.pipeline) continue
+          const source = programOf(other.words)
+          if (source.name === 'find') readFiles.push(...findFacts(source.args).patterns.filter(isSensitiveOperand))
+        }
       }
     }
   }

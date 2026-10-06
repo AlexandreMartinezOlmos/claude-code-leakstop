@@ -40,3 +40,18 @@ export async function describe(finding: Finding): Promise<MaskedFinding> {
   const { value, start: _start, end: _end, ...rest } = finding
   return { ...rest, masked: mask(value, finding.prefix), fingerprint: await fingerprint(value) }
 }
+
+/**
+ * `text` with each finding's value replaced by its masked form. The findings must come
+ * from scanning this same `text`; overlapping ones keep the first replacement.
+ */
+export function redact(text: string, findings: readonly Finding[]): string {
+  let out = text
+  let limit = Number.POSITIVE_INFINITY
+  for (const finding of [...findings].sort((a, b) => b.start - a.start)) {
+    if (finding.end > limit) continue
+    out = out.slice(0, finding.start) + mask(finding.value, finding.prefix) + out.slice(finding.end)
+    limit = finding.start
+  }
+  return out
+}

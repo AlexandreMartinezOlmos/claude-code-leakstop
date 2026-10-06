@@ -1,7 +1,7 @@
 {
   "name": "leakstop",
   "displayName": "LeakStop",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Stops secrets from leaking before they are written, printed or committed to git.",
   "author": {
     "name": "AlexandreMartinezOlmos",
@@ -28,6 +28,12 @@
       "title": "Protection mode",
       "description": "monitor only warns and logs; standard holds critical findings; strict also holds medium findings and blocks reads of sensitive files.",
       "default": "standard"
+    },
+    "statusLine": {
+      "type": "boolean",
+      "title": "Status line",
+      "description": "Show a line under the prompt while LeakStop is on (or paused). When the line is missing, nothing is protecting the session.",
+      "default": false
     }
   }
 }

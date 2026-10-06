@@ -20,7 +20,7 @@ import { classifyPath, scanEdit, scanText, scanWrite } from './detect.ts'
 import type { Finding, Rule, ScanResult } from './detect.ts'
 import { scanDiff } from './diff.ts'
 import type { DiffFinding } from './diff.ts'
-import { describe, fingerprint } from './mask.ts'
+import { describe, fingerprint, mask, redact } from './mask.ts'
 import type { MaskedFinding } from './mask.ts'
 import * as say from './messages.ts'
 import type { WriteTool } from './messages.ts'
@@ -106,7 +106,7 @@ async function record($: EngineInterface, tool: string, path: string, notes: rea
   }))
   const { value = [] } = await $.state.get(findingsRef)
   await $.state.set(findingsRef, [...value, ...entries].slice(-MAX_FINDINGS))
-  if (decision === 'warned') {
+  if (decision === 'warned' || decision === 'masked') {
     const { value: banner = [] } = await $.state.get(bannerRef)
     await $.state.set(bannerRef, [...banner, ...entries].slice(-MAX_BANNER))
   }
@@ -127,8 +127,14 @@ async function clearBanner($: EngineInterface): Promise<void> {
   if (value.length > 0) await $.state.set(bannerRef, [])
 }
 
-async function setPaused($: EngineInterface, paused: boolean): Promise<void> {
+async function setPaused($: EngineInterface, paused: boolean, hasStatus: boolean): Promise<void> {
   await $.state.set(pausedRef, paused)
+  if (hasStatus) showStatus($, paused)
+}
+
+/** The line under the prompt that says LeakStop is on: when it is missing, nothing is protecting the session. */
+function showStatus($: EngineInterface, paused: boolean): void {
+  $.ui.status(paused ? '△ LeakStop paused · /leakstop resume' : '◆ LeakStop on')
 }
 
 /** Allows findings for good: the store is shared by every session on the machine. */
@@ -676,15 +682,142 @@ function onFailure(mode: Mode, next: Failure): { deny: string } | undefined {
   return { deny: `LeakStop could not check this call (${next.error.kind}), so it was blocked. Try again, or ask the user to review it.` }
 }
 
+// --- Tool output ---------------------------------------------------------------
+
+/** Severities masked out of what a tool returns; monitor mode only reports them. */
+const outputSeverities = (mode: Mode): ReadonlySet<string> => new Set(mode === 'strict' ? ['critical', 'medium'] : ['critical'])
+
+/** Keys of an MCP result that carry binary data (images, audio, blobs), not text. */
+const BINARY_KEYS: ReadonlySet<string> = new Set(['data', 'blob'])
+
+type OutputScan = {
+  /** Masks the secrets in one piece of output; in monitor mode the text comes back as it was. */
+  take: (text: string) => Promise<string>
+  notes: Map<string, MaskedFinding>
+  skipped: number
+}
+
+function outputScan(mode: Mode, allowed: ReadonlySet<string>, rules: readonly Rule[]): OutputScan {
+  const severities = outputSeverities(mode)
+  const scan: OutputScan = {
+    notes: new Map(),
+    skipped: 0,
+    take: async (text) => {
+      if (text === '') return text
+      const result = scanText(text, { extraRules: rules })
+      if (result.isSkipped) scan.skipped++
+      const hits: Finding[] = []
+      for (const finding of result.findings) {
+        if (!severities.has(finding.severity)) continue
+        const note = await describe(finding)
+        if (allowed.has(note.fingerprint)) continue
+        hits.push(finding)
+        scan.notes.set(note.fingerprint, note)
+      }
+      return mode === 'monitor' || hits.length === 0 ? text : redact(text, hits)
+    },
+  }
+  return scan
+}
+
+/** The secrets on disk at `path` whose masked form `content` would write in their place. */
+async function maskedOverwrite($: EngineInterface, path: string, content: string): Promise<MaskedFinding[]> {
+  let current: unknown
+  try {
+    current = await $.fs.read(path)
+  } catch {
+    return []
+  }
+  if (typeof current !== 'string') return []
+  const lost: MaskedFinding[] = []
+  for (const finding of scanText(current).findings) {
+    if (content.includes(mask(finding.value, finding.prefix)) && !content.includes(finding.value)) lost.push(await describe(finding))
+  }
+  return lost
+}
+
+/**
+ * True for the file Claude Code saves a large output to: a regular file directly inside a
+ * `tool-results` folder. Any other path a result names is never rewritten.
+ */
+async function isSavedOutput($: EngineInterface, path: string): Promise<boolean> {
+  if (!/[\\/]tool-results[\\/][^\\/]+$/.test(path)) return false
+  const stat = await $.fs.stat(path)
+  return stat.kind === 'file' && stat.isLink !== true
+}
+
+/** Every string inside an MCP result, masked; binary fields are left alone. */
+async function maskDeep(value: unknown, take: (text: string) => Promise<string>, depth = 0): Promise<unknown> {
+  if (typeof value === 'string') return take(value)
+  if (depth > 20 || value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) {
+    const out: unknown[] = []
+    for (const item of value) out.push(await maskDeep(item, take, depth + 1))
+    return out
+  }
+  const out: Record<string, unknown> = {}
+  for (const [key, item] of Object.entries(value)) out[key] = BINARY_KEYS.has(key) ? item : await maskDeep(item, take, depth + 1)
+  return out
+}
+
+/**
+ * The tool's result with secrets masked, before the model or the transcript gets it. A large
+ * Bash output is also saved whole to a file before any hook runs: that file is masked too.
+ */
+async function maskOutput($: EngineInterface, e: ToolCallInput, r: any, mode: Mode): Promise<any> {
+  if (r === undefined || r.deny !== undefined || r.isError === true || r.result === null || typeof r.result !== 'object') return r
+  const { value: paused = false } = await $.state.get(pausedRef)
+  if (paused) return r
+  const config = await getConfig($)
+  const scan = outputScan(mode, await allowedFingerprints($, config), customRules(config))
+  let result = r.result
+  let path = ''
+
+  if (e.tool === 'Bash') {
+    result = { ...result, stdout: await scan.take(String(result.stdout ?? '')), stderr: await scan.take(String(result.stderr ?? '')) }
+    if (typeof result.persistedOutputPath === 'string') {
+      try {
+        if (!(await isSavedOutput($, result.persistedOutputPath))) throw new Error('not a saved output')
+        const saved = await $.fs.read(result.persistedOutputPath)
+        if (typeof saved === 'string') {
+          const masked = await scan.take(saved)
+          if (masked !== saved) await $.fs.write(result.persistedOutputPath, masked)
+        }
+      } catch {
+        $.ui.log('LeakStop: the saved output of this command could not be checked')
+      }
+    }
+  } else if (e.tool === 'Read') {
+    if (result.type !== 'text' || typeof result.file?.content !== 'string') return r
+    path = displayPathOf(e.file_path, await sessionCwd($))
+    result = { ...result, file: { ...result.file, content: await scan.take(result.file.content) } }
+  } else {
+    result = await maskDeep(result, scan.take)
+  }
+
+  if (scan.skipped > 0) $.ui.log(`LeakStop: an output of ${toolLabel(e.tool)} was larger than 4 MiB and was not checked`)
+  const notes = [...scan.notes.values()]
+  if (notes.length === 0) return r
+  await record($, e.tool, path, notes, mode === 'monitor' ? 'warned' : 'masked')
+  if (mode === 'monitor') return r
+  return { result, context: [...(r.context ?? []), say.maskedContext(toolLabel(e.tool), notes)] }
+}
+
 // --- The module -------------------------------------------------------------
 
 export const register: Register = (on, options) => {
   const mode: Mode = options.mode === 'monitor' || options.mode === 'strict' ? options.mode : 'standard'
+  // Off by default: the line takes a row under the prompt in every session.
+  const hasStatus = options.statusLine === true
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'leakstop', description: 'Show LeakStop findings, pause or resume protection, or allow a finding' })
     const config = await loadConfig($)
     for (const warning of config.warnings.slice(0, 5)) $.ui.log(`LeakStop: .leakstop.json: ${warning}`)
+    if (hasStatus) {
+      const { value: paused = false } = await $.state.get(pausedRef)
+      showStatus($, paused)
+    }
     return next(e)
   })
 
@@ -694,7 +827,22 @@ export const register: Register = (on, options) => {
   // is anything that is not one of those automated senders.
   on('prompt.submit', async ($, e, next) => {
     if (!AUTOMATED.has(e.origin?.kind ?? '')) await clearBanner($)
-    return next(e)
+    // A secret pasted into the message is masked before the model or the transcript gets it.
+    // The prompt history (the up arrow) is the engine's and keeps what was typed.
+    try {
+      const { value: paused = false } = await $.state.get(pausedRef)
+      if (paused) return next(e)
+      const config = await getConfig($)
+      const scan = outputScan(mode, await allowedFingerprints($, config), customRules(config))
+      const text = await scan.take(e.text)
+      const notes = [...scan.notes.values()]
+      if (notes.length === 0) return next(e)
+      await record($, 'prompt', 'your message', notes, mode === 'monitor' ? 'warned' : 'masked')
+      if (mode === 'monitor') return next(e)
+      return next({ ...e, text, context: [...(e.context ?? []), say.promptMaskedContext(notes)] })
+    } catch {
+      return next(e) // a prompt is never blocked
+    }
   })
 
   on('command.run', { command: 'leakstop' }, async ($, e) => {
@@ -727,11 +875,11 @@ export const register: Register = (on, options) => {
       return { text: `LeakStop: /leakstop ${args.kind} only works when you type it yourself.` }
     }
     if (args.kind === 'pause') {
-      await setPaused($, true)
+      await setPaused($, true, hasStatus)
       return { text: 'LeakStop paused: nothing is checked until you run /leakstop resume. Changes to .leakstop.json are still held.' }
     }
     if (args.kind === 'resume') {
-      await setPaused($, false)
+      await setPaused($, false, hasStatus)
       return { text: 'LeakStop resumed.' }
     }
     if (args.kind === 'reload') {
@@ -792,7 +940,7 @@ export const register: Register = (on, options) => {
           </Box>
         ))}
         <Box gap={2}>
-          <Button key="pause" hotkey="1" label={paused ? 'Resume' : 'Pause'} onPress={() => setPaused($, !paused)} />
+          <Button key="pause" hotkey="1" label={paused ? 'Resume' : 'Pause'} onPress={() => setPaused($, !paused, hasStatus)} />
           <Button key="close" hotkey="2" label="Close" onPress={() => $.ui.close({ id: PANE })} />
         </Box>
       </Box>
@@ -800,6 +948,11 @@ export const register: Register = (on, options) => {
   })
 
   on('tool.call', { tool: ['Edit', 'Write', 'NotebookEdit'] }, async ($, e, next) => {
+    // Claude saw the masked form of a secret this file holds: writing the file back from what it saw would replace the real value.
+    if (e.tool === 'Write' && e.content.includes('••••••')) {
+      const lost = await maskedOverwrite($, e.file_path, e.content)
+      if (lost.length > 0) return { deny: say.maskedOverwriteDeny(displayPathOf(e.file_path, await sessionCwd($)), lost) }
+    }
     const config = await getConfig($)
     const call = scanCall(e, customRules(config))
     if (call === undefined) return next(e)
@@ -919,8 +1072,33 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => onFailure(mode, next) ?? next(e))
 
   on('tool.call', { tool: /^mcp__/ }, async ($, e, next) => {
+    // An MCP tool that names .leakstop.json may rewrite it: ask, as for Write, Edit and the shell, even when paused.
+    if (JSON.stringify(e).includes('.leakstop.json')) {
+      const guard = await checkConfig($, e.tool, '.leakstop.json', mode)
+      if (guard !== undefined) return { deny: (guard as { deny: string }).deny }
+    }
     const verdict = await guardOutbound($, e, mode)
     return verdict === undefined ? next(e) : { deny: (verdict as { deny: string }).deny }
+  }).catch(($, e, next) => onFailure(mode, next) ?? next(e))
+
+  // What a tool returns: a secret it printed is masked before the model or the transcript gets it.
+  // The tool has already run, so a failure after it must not run it again: it withholds the output instead.
+  on('tool.call', { tool: ['Bash', 'Read'] }, async ($, e, next) => {
+    const r = await next(e)
+    try {
+      return await maskOutput($, e, r, mode)
+    } catch {
+      return mode === 'monitor' ? r : { deny: say.OUTPUT_FAILURE }
+    }
+  }).catch(($, e, next) => onFailure(mode, next) ?? next(e))
+
+  on('tool.call', { tool: /^mcp__/ }, async ($, e, next) => {
+    const r = await next(e)
+    try {
+      return await maskOutput($, e, r, mode)
+    } catch {
+      return mode === 'monitor' ? r : { deny: say.OUTPUT_FAILURE }
+    }
   }).catch(($, e, next) => onFailure(mode, next) ?? next(e))
 }
 

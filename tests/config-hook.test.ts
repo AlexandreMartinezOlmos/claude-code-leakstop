@@ -204,3 +204,22 @@ test('ignorePaths relaxes a weaker finding in a file an outbound call names by i
   expect(ran(await $.tool.call({ tool: 'SendFile', to: 'peer', files: ['/work/app/tests/fixtures/user.json'] }))).toBe(true)
   expect(env.findings()).toEqual([])
 })
+
+test('an MCP tool that names .leakstop.json is held like Write, even when paused', async ($, on) => {
+  const { asked } = setup(on, { ignorePaths: [] })
+  await start($)
+  const mcp = (args: Record<string, unknown>) => $.tool.call({ tool: 'mcp__fs__write_file', ...args })
+  expect(isDenied(await mcp({ path: '/work/app/.leakstop.json', content: JSON.stringify({ ignorePaths: ['**'] }) }))).toBe(true)
+  expect(asked.questions.length).toBe(1)
+  await $.command.run({ command: 'leakstop', args: 'pause' })
+  expect(isDenied(await mcp({ edits: [{ file: '.leakstop.json', text: '{}' }] }))).toBe(true)
+  expect(asked.questions.length).toBe(2)
+})
+
+test('an MCP tool that does not name .leakstop.json is not asked about it', async ($, on) => {
+  const { asked } = setup(on, { ignorePaths: [] })
+  await start($)
+  const r = await $.tool.call({ tool: 'mcp__fs__write_file', path: '/work/app/notes.md', content: 'hello' })
+  expect(isDenied(r)).toBe(false)
+  expect(asked.questions.length).toBe(0)
+})
