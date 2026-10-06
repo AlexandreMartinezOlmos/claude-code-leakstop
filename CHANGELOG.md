@@ -2,7 +2,9 @@
 
 All notable changes to LeakStop. It follows [semantic versioning](https://semver.org); see "Stability and versioning" in the README for what is part of the public interface.
 
-## Unreleased
+## 1.1.0 - 2026-10-06
+
+LeakStop now also keeps secrets out of what tools return and out of your own messages. Requires Claude Code 2.1.287 or later, as before.
 
 - **Masks secrets in what tools return.** A secret printed by a command, found in a file Claude reads or returned by an MCP tool now reaches neither Claude nor the session's transcript: LeakStop replaces it with its masked form and tells Claude. That includes the copy of a large command output that Claude Code saves to disk. Real secrets are masked in `standard` mode, weaker signals too in `strict`; `monitor` only reports.
 - **Masks secrets pasted into your messages**, the same way. Claude Code's prompt history keeps what you typed.
@@ -78,7 +80,8 @@ First release. Requires Claude Code 2.1.287 or later.
 
 Not in this release: redacting secrets pasted into the prompt, and redacting the result of a read.
 
-[Unreleased]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.0.2...develop
+[Unreleased]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.1.0...develop
+[1.1.0]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v0.2.0...v1.0.0
