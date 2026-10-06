@@ -32,9 +32,9 @@ Set the `mode` option with `/plugin configure leakstop@leakstop`:
 
 - `standard` (default) holds real secrets, blocks risky commits and pushes, masks real secrets in what tools return and in your messages, and warns on weaker signals.
 - `strict` also holds and masks weaker signals and blocks reading sensitive files outright.
-- `monitor` never holds, blocks or masks, it only warns and logs.
+- `monitor` never holds, blocks or masks, it only warns and logs. It is the safest way to try LeakStop on a new repository.
 
-Turn on the `statusLine` option (off by default) to keep a line under the prompt that says LeakStop is on; when it is missing, nothing is protecting the session. It is the safest way to try LeakStop on a new repository.
+Turn on the `statusLine` option (off by default) to keep a line under the prompt that says LeakStop is on; when it is missing, nothing is protecting the session.
 
 ## How it works
 
@@ -50,7 +50,7 @@ LeakStop is a hooks module. Each hook looks at what is about to happen, or at wh
 
 It does not edit a tool's input, with one exception, described below. It does change three things on their way to Claude, and only to replace a secret by its masked form (a short prefix and the last three characters): what `Bash`, `Read` and MCP tools return, the text you send, and, for a large `Bash` output, the copy of it that Claude Code saves under its own folder in your home directory, which LeakStop reads and rewrites with the value masked. It only rewrites that copy when it is a regular file inside a `tool-results` folder; any other path is left alone.
 
-The exception for inputs: When a `Bash` command is a single plain view of an environment file (such as `cat .env`) or of the whole environment (`env` or `printenv`), the question offers **Show names only**. If you choose it, the command is replaced by a `sed` filter that prints the variable names and hides every value. In every other case the call is either passed on exactly as it came, or denied.
+The exception for inputs: when a `Bash` command is a single plain view of an environment file (such as `cat .env`) or of the whole environment (`env` or `printenv`), the question offers **Show names only**. If you choose it, the command is replaced by a `sed` filter that prints the variable names and hides every value. In every other case the call is either passed on exactly as it came, or denied.
 
 ## What it runs
 
