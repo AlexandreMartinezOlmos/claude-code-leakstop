@@ -230,3 +230,33 @@ test('an escaped or quoted command name is not read as the plain grep, but an es
   expect(respects('grep -rn \\KEY .')).toBe(true)
   expect(respects('grep -rn "KEY" .')).toBe(true)
 })
+
+test('finds sensitive files printed from git history or the index', () => {
+  expect(facts('git show HEAD:.env').readFiles).toEqual(['.env'])
+  expect(facts('git show :.env').readFiles).toEqual(['.env'])
+  expect(facts('git -C app show main~3:config/.env.production').readFiles).toEqual(['config/.env.production'])
+  expect(facts('git cat-file -p origin/main:deploy/server.pem').readFiles).toEqual(['deploy/server.pem'])
+  expect(facts('git log -p -- .env').readFiles).toEqual(['.env'])
+  expect(facts('git blame .env').readFiles).toEqual(['.env'])
+  expect(facts('git --no-pager show HEAD:.env | head').readFiles).toEqual(['.env'])
+})
+
+test('leaves git commands that print no file content alone', () => {
+  for (const command of ['git log -- .env', 'git log --oneline .env', 'git show HEAD:src/app.ts', 'git diff .env.example', 'git diff HEAD~1 -- .env', 'git status', 'git add .env.example', 'git show HEAD --stat']) {
+    expect(facts(command).readFiles).toEqual([])
+  }
+})
+
+test('finds sensitive files printed by find -exec or xargs', () => {
+  expect(facts("find . -name '.env*' -exec cat {} \;").readFiles).toEqual(['.env*'])
+  expect(facts('find / -name id_rsa -exec head -n 3 {} +').readFiles).toEqual(['id_rsa'])
+  expect(facts("find . -path '*/secrets/*.pem' -execdir cat {} \;").readFiles).toEqual(['*/secrets/*.pem'])
+  expect(facts("find . -name '.env' | xargs cat").readFiles).toEqual(['.env'])
+  expect(facts("find . -name '.env' -print0 | xargs -0 grep -h KEY").readFiles).toEqual(['.env'])
+})
+
+test('leaves find and xargs that do not print sensitive files alone', () => {
+  for (const command of ["find . -name '.env*'", "find . -name '*.ts' -exec cat {} \;", "find . -name '.env' -exec rm {} \;", "find . -name '.env' | xargs ls -l", "find . -name '*.md' | xargs cat"]) {
+    expect(facts(command).readFiles).toEqual([])
+  }
+})

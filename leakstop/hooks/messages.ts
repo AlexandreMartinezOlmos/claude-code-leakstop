@@ -282,3 +282,32 @@ export function outboundFileQuestion(tool: string, files: readonly string[]): st
 export function outboundFileDeny(tool: string, files: readonly string[]): string {
   return `LeakStop blocked this ${toolLabel(tool)} call: ${list(files)} hold secrets and would be sent ${destinationOf(tool)}. Do not send them. Send a copy without the secrets (for example .env.example with the values removed), or ask the user.`
 }
+
+// --- Tool output -----------------------------------------------------------------
+
+/** What the model reads after an output in which LeakStop masked secrets. */
+export function maskedContext(tool: string, findings: readonly MaskedFinding[]): string {
+  const what = findings.slice(0, 5).map(typeOf).join(', ')
+  const more = findings.length > 5 ? ` (and ${findings.length - 5} more)` : ''
+  return `LeakStop masked ${what}${more} in the output of this ${tool} call: the value never reached you and is not in the transcript. Do not try to print or read it another way; if the task needs it, use it from an environment variable or ask the user.`
+}
+
+/** The line above the prompt when an output carried a secret. */
+export function maskedLine(tool: string, finding: MaskedFinding, isMonitor: boolean): string {
+  return `LeakStop · ${finding.severity.toUpperCase()} · ${finding.label} in the output of ${tool}${isMonitor ? ' · monitor mode: this would have been masked' : ' · masked'}`
+}
+
+/** Instead of an output LeakStop could not check after the tool ran. */
+export const OUTPUT_FAILURE = 'LeakStop could not check the output of this call, so it was withheld. The call did run; do not run it again just to see its output.'
+
+/** What the model reads after a message in which LeakStop masked a pasted secret. */
+export function promptMaskedContext(findings: readonly MaskedFinding[]): string {
+  const what = findings.slice(0, 5).map(typeOf).join(', ')
+  return `LeakStop masked ${what} that the user pasted into this message: the value never reached you. If the task needs it, ask the user to put it in an environment variable or a git-ignored file instead of the chat.`
+}
+
+/** Denial of a Write that would put the masked form of a secret over the real value on disk. */
+export function maskedOverwriteDeny(path: string, findings: readonly MaskedFinding[]): string {
+  const what = findings.slice(0, 5).map((f) => `${typeOf(f)} (${f.masked})`).join(', ')
+  return `LeakStop blocked this write: ${path} holds ${what}, and what you would write has only the masked form LeakStop showed you, so the real value would be lost. Change the file with Edit around that line instead, without including the masked value in old_string or new_string.`
+}

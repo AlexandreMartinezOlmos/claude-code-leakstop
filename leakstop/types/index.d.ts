@@ -1,7 +1,7 @@
 // The contract of LeakStop's `$.state` values. Values only ever hold what is
 // safe to keep: types, locations and fingerprints, never a secret.
 
-export type Decision = 'allowed' | 'denied' | 'warned' | 'passed'
+export type Decision = 'allowed' | 'denied' | 'warned' | 'passed' | 'masked'
 
 export type StoredFinding = {
   /** `sha256:` and 16 hex characters. */

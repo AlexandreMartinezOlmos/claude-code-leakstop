@@ -5,7 +5,7 @@
 //
 // Exit code 1 and one line per problem when something disagrees.
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -33,6 +33,11 @@ const readme = read('README.md')
 const minimum = /Claude Code (\d+\.\d+\.\d+) or later/.exec(readme)?.[1]
 if (minimum === undefined) problems.push('README.md does not state the minimum Claude Code version')
 else if (!changelog.includes(`Requires Claude Code ${minimum} or later`)) problems.push(`CHANGELOG.md never says "Requires Claude Code ${minimum} or later" (the README minimum)`)
+
+// Everything in the plugin folder is installed on every machine: the tests stay outside it.
+const shipped = (dir: string): string[] => readdirSync(`${root}${dir}`, { withFileTypes: true }).flatMap((entry) =>
+  entry.name === 'types' && dir === 'leakstop/.claude-plugin' ? [] : entry.isDirectory() ? shipped(`${dir}/${entry.name}`) : [`${dir}/${entry.name}`])
+for (const file of shipped('leakstop').filter((path) => /\.test\.tsx?$/.test(path) || path.includes('/tests/'))) problems.push(`${file} is a test inside the plugin folder: tests belong in tests/`)
 
 // The plugin folder is what gets installed and what the directory reads, so it carries its own README.
 const pluginReadme = read('leakstop/README.md')
