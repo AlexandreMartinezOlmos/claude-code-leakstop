@@ -77,6 +77,6 @@ LeakStop collects nothing and sends nothing. It has no network, model or environ
 
 ## More
 
-The full documentation, a demo recording, the changelog and the privacy and security policies are in the repository: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop
+The full documentation, a demo recording, the changelog and the privacy and security policies are in the project's repository, linked as the homepage of this plugin.
 
 LeakStop is a safety net, not a wall. The repository README lists what it cannot see.
