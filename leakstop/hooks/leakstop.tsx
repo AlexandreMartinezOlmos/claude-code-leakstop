@@ -736,6 +736,16 @@ async function maskedOverwrite($: EngineInterface, path: string, content: string
   return lost
 }
 
+/**
+ * True for the file Claude Code saves a large output to: a regular file directly inside a
+ * `tool-results` folder. Any other path a result names is never rewritten.
+ */
+async function isSavedOutput($: EngineInterface, path: string): Promise<boolean> {
+  if (!/[\\/]tool-results[\\/][^\\/]+$/.test(path)) return false
+  const stat = await $.fs.stat(path)
+  return stat.kind === 'file' && stat.isLink !== true
+}
+
 /** Every string inside an MCP result, masked; binary fields are left alone. */
 async function maskDeep(value: unknown, take: (text: string) => Promise<string>, depth = 0): Promise<unknown> {
   if (typeof value === 'string') return take(value)
@@ -767,6 +777,7 @@ async function maskOutput($: EngineInterface, e: ToolCallInput, r: any, mode: Mo
     result = { ...result, stdout: await scan.take(String(result.stdout ?? '')), stderr: await scan.take(String(result.stderr ?? '')) }
     if (typeof result.persistedOutputPath === 'string') {
       try {
+        if (!(await isSavedOutput($, result.persistedOutputPath))) throw new Error('not a saved output')
         const saved = await $.fs.read(result.persistedOutputPath)
         if (typeof saved === 'string') {
           const masked = await scan.take(saved)

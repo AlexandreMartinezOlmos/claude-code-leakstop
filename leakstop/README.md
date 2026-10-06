@@ -32,9 +32,9 @@ Set the `mode` option with `/plugin configure leakstop@leakstop`:
 
 - `standard` (default) holds real secrets, blocks risky commits and pushes, masks real secrets in what tools return and in your messages, and warns on weaker signals.
 - `strict` also holds and masks weaker signals and blocks reading sensitive files outright.
-- `monitor` never holds, blocks or masks, it only warns and logs.
+- `monitor` never holds, blocks or masks, it only warns and logs. It is the safest way to try LeakStop on a new repository.
 
-Turn on the `statusLine` option (off by default) to keep a line under the prompt that says LeakStop is on; when it is missing, nothing is protecting the session. It is the safest way to try LeakStop on a new repository.
+Turn on the `statusLine` option (off by default) to keep a line under the prompt that says LeakStop is on; when it is missing, nothing is protecting the session.
 
 ## How it works
 
@@ -48,9 +48,9 @@ LeakStop is a hooks module. Each hook looks at what is about to happen, or at wh
 
 ## What it changes
 
-It does not edit a tool's input, with one exception, described below. It does change three things on their way to Claude, and only to replace a secret by its masked form (a short prefix and the last three characters): what `Bash`, `Read` and MCP tools return, the text you send, and, for a large `Bash` output, the copy of it that Claude Code saves under its own folder in your home directory, which LeakStop reads and rewrites with the value masked.
+It does not edit a tool's input, with one exception, described below. It does change three things on their way to Claude, and only to replace a secret by its masked form (a short prefix and the last three characters): what `Bash`, `Read` and MCP tools return, the text you send, and, for a large `Bash` output, the copy of it that Claude Code saves under its own folder in your home directory, which LeakStop reads and rewrites with the value masked. It only rewrites that copy when it is a regular file inside a `tool-results` folder; any other path is left alone.
 
-The exception for inputs: When a `Bash` command is a single plain view of an environment file (such as `cat .env`) or of the whole environment (`env` or `printenv`), the question offers **Show names only**. If you choose it, the command is replaced by a `sed` filter that prints the variable names and hides every value. In every other case the call is either passed on exactly as it came, or denied.
+The exception for inputs: when a `Bash` command is a single plain view of an environment file (such as `cat .env`) or of the whole environment (`env` or `printenv`), the question offers **Show names only**. If you choose it, the command is replaced by a `sed` filter that prints the variable names and hides every value. In every other case the call is either passed on exactly as it came, or denied.
 
 ## What it runs
 
@@ -63,15 +63,13 @@ It also reads the files that a tool call is about to write, send or open, `.leak
 
 ## What it sends and where
 
-Nothing. LeakStop has no network access, does not call a model and sends no data anywhere. The only things it produces are the question it shows you, the warning line, the findings panel, and the short reason it gives Claude when it denies an action, which only ever shows a masked value.
+Nothing. LeakStop has no network access, does not call a model and sends no data anywhere. The only things it produces are the question it shows you, the warning line, the findings panel, and the short reason it gives Claude when it denies an action or masks a secret, which only ever shows a masked value.
 
 It never reads your environment variables or any credential from your machine. The names of environment variables appear only inside the advice it gives Claude ("read the value from an environment variable instead").
 
 ## Detection patterns
 
-The detector contains text that looks like a credential sent to a server, and it is not one:
-
-- `hooks/commands.ts` and `hooks/detect.ts` recognise commands such as `python -c` and `node -e`, and names such as `TOKEN` or `.npmrc`, as patterns to look for in the text of a command. They only read the text. LeakStop never runs that code, never reads the value of an environment variable and never sends anything out.
+The detector keeps lists of program names and variable names to look for in the text of a command, such as the names of script interpreters and of the variables that usually hold keys. It only compares text with them: LeakStop never runs that code, never reads the value of an environment variable and never sends anything out.
 
 ## Privacy and trust
 
@@ -79,6 +77,6 @@ LeakStop collects nothing and sends nothing. It has no network, model or environ
 
 ## More
 
-The full documentation, a demo recording, the changelog and the privacy and security policies are in the repository: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop
+The full documentation, a demo recording, the changelog and the privacy and security policies are in the project's repository, linked as the homepage of this plugin.
 
 LeakStop is a safety net, not a wall. The repository README lists what it cannot see.

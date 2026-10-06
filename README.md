@@ -242,13 +242,14 @@ LeakStop runs with the same access as Claude Code and is not sandboxed, so it is
       tool.call{tool=Edit|Write|NotebookEdit}, tool.call{tool=Bash}, tool.call{tool=Read},
       tool.call{tool=WebFetch|WebSearch|Agent|SendMessage|SendFile|Artifact|…},
       tool.call{tool=/"^mcp__"/}, tool.call{tool=Bash|Read}, tool.call{tool=/"^mcp__"/}
-  ./leakstop.tsx calls: $.clock.now, $.command.register, $.fs.exists, $.fs.read, $.fs.write,
-      $.process.run, $.session.cwd, $.session.surfaces, $.state.get, $.state.set, $.store.delete,
-      $.store.get, $.store.set, $.ui.ask, $.ui.close, $.ui.log, $.ui.open, $.ui.resolve, $.ui.status
+  ./leakstop.tsx calls: $.clock.now, $.command.register, $.fs.exists, $.fs.read, $.fs.stat,
+      $.fs.write, $.process.run, $.session.cwd, $.session.surfaces, $.state.get, $.state.set,
+      $.store.delete, $.store.get, $.store.set, $.ui.ask, $.ui.close, $.ui.log, $.ui.open,
+      $.ui.resolve, $.ui.status
   ✔ Validation passed
   ```
 
-  There is no `$.http`, no `$.model` and no `$.env` in that list. `$.fs.write` is used for one thing only: masking a secret in the copy of a large command output that Claude Code saves under its own folder. [PRIVACY.md](PRIVACY.md) says what it keeps and where.
+  There is no `$.http`, no `$.model` and no `$.env` in that list. `$.fs.write` is used for one thing only: masking a secret in the copy of a large command output that Claude Code saves under its own folder, and only when that copy is a regular file inside a `tool-results` folder. [PRIVACY.md](PRIVACY.md) says what it keeps and where.
 - **It never approves anything for you.** After a pass, Claude Code's own permission prompts and rules still apply.
 - **Secrets stay masked.** Only a prefix and the last three characters are ever shown, and findings are tracked by a hash.
 - **It fails closed.** If LeakStop itself errors or times out, the action is denied (in `monitor` mode it is allowed instead).
@@ -274,7 +275,7 @@ Claude Code mods are still an early-access feature. The oldest Claude Code versi
 LeakStop is a safety net, not a wall. Please read this part.
 
 - **It reads text; it does not run anything.** A secret that is base64-encoded, split across variables, built by a script (`python -c`, `node -e`) or read by a program is not seen before the command runs; if it is printed in plain text, it is masked in the output.
-- **It only watches the tools it knows send data out.** It scans `WebFetch`, `WebSearch`, `Agent`, `SendMessage`, `SendFile`, `Artifact`, `ArtifactData`, `ArtifactComments`, `PushNotification`, `SendFeedback`, `RemoteTrigger` and every MCP tool, but it cannot tell what an MCP tool *does* with what it is given. In particular, an MCP tool that writes files can edit `.leakstop.json` under another name for it (the question is asked when its arguments name the file, as for `Write`, `Edit`, `NotebookEdit` and shell commands) and can write a secret into a file git ignores without the ignored-file exemption applying: it is held like any other secret leaving the session.
+- **It only watches the tools it knows send data out.** It scans `WebFetch`, `WebSearch`, `Agent`, `SendMessage`, `SendFile`, `Artifact`, `ArtifactData`, `ArtifactComments`, `PushNotification`, `SendFeedback`, `RemoteTrigger` and every MCP tool, but it cannot tell what an MCP tool *does* with what it is given. In particular, an MCP tool that writes files can still change `.leakstop.json` when its arguments do not name the file, for example through a folder or a pattern (LeakStop asks when they do, as for `Write`, `Edit`, `NotebookEdit` and shell commands), and can write a secret into a file git ignores without the ignored-file exemption applying: it is held like any other secret leaving the session.
 - **Masking is not undoing.** A command whose output is masked has still run, and anything it sent elsewhere is gone. A value you allowed for good is not masked. Claude Code's prompt history keeps what you typed, and an output larger than 4 MiB is not checked (LeakStop says so).
 - **It can be switched off without telling you.** `--safe-mode`, `--bare`, `disableAllHooks` in your settings, an organisation policy, or Anthropic switching installed mods off remotely all stop it. Check `/plugin` now and then, or turn on the [status line](#status-line-optional).
 - **Where nothing can be drawn, it cannot ask.** In `claude -p`, the Agent SDK and the cloud, anything LeakStop would hold is **denied** (it never hangs), which can break an automation; use `monitor` mode there. Warnings are written to the transcript instead of the banner. The VS Code chat panel does show the question (as one line, since it runs line breaks together) but draws no banner or history panel: `/leakstop` answers as text.
