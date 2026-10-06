@@ -371,3 +371,16 @@ test('findings, the pause and the warnings live in $.state, so a reload keeps th
   const bar = await band($, 'terminal')
   expect(await bar.find({ type: 'Text', text: /PAUSED/ })).toBeDefined()
 })
+
+test('a status line says LeakStop is on, and paused while it is paused', async ($, on) => {
+  const statuses: (string | undefined)[] = []
+  on('ui.status', (_$: any, e: any) => {
+    statuses.push(e.text)
+    return { value: undefined }
+  })
+  setup(on)
+  await $.session.start({ cwd: '/work/app' })
+  await slash($, 'pause')
+  await slash($, 'resume')
+  expect(statuses).toEqual(['◆ LeakStop on', '△ LeakStop paused · /leakstop resume', '◆ LeakStop on'])
+})

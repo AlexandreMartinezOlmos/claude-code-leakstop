@@ -129,6 +129,12 @@ async function clearBanner($: EngineInterface): Promise<void> {
 
 async function setPaused($: EngineInterface, paused: boolean): Promise<void> {
   await $.state.set(pausedRef, paused)
+  showStatus($, paused)
+}
+
+/** The line under the prompt that says LeakStop is on: when it is missing, nothing is protecting the session. */
+function showStatus($: EngineInterface, paused: boolean): void {
+  $.ui.status(paused ? '△ LeakStop paused · /leakstop resume' : '◆ LeakStop on')
 }
 
 /** Allows findings for good: the store is shared by every session on the machine. */
@@ -795,6 +801,8 @@ export const register: Register = (on, options) => {
     await $.command.register({ name: 'leakstop', description: 'Show LeakStop findings, pause or resume protection, or allow a finding' })
     const config = await loadConfig($)
     for (const warning of config.warnings.slice(0, 5)) $.ui.log(`LeakStop: .leakstop.json: ${warning}`)
+    const { value: paused = false } = await $.state.get(pausedRef)
+    showStatus($, paused)
     return next(e)
   })
 
