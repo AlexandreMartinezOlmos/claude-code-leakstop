@@ -305,3 +305,9 @@ export function promptMaskedContext(findings: readonly MaskedFinding[]): string 
   const what = findings.slice(0, 5).map(typeOf).join(', ')
   return `LeakStop masked ${what} that the user pasted into this message: the value never reached you. If the task needs it, ask the user to put it in an environment variable or a git-ignored file instead of the chat.`
 }
+
+/** Denial of a Write that would put the masked form of a secret over the real value on disk. */
+export function maskedOverwriteDeny(path: string, findings: readonly MaskedFinding[]): string {
+  const what = findings.slice(0, 5).map((f) => `${typeOf(f)} (${f.masked})`).join(', ')
+  return `LeakStop blocked this write: ${path} holds ${what}, and what you would write has only the masked form LeakStop showed you, so the real value would be lost. Change the file with Edit around that line instead, without including the masked value in old_string or new_string.`
+}

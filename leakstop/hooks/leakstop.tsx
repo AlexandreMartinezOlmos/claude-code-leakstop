@@ -20,7 +20,7 @@ import { classifyPath, scanEdit, scanText, scanWrite } from './detect.ts'
 import type { Finding, Rule, ScanResult } from './detect.ts'
 import { scanDiff } from './diff.ts'
 import type { DiffFinding } from './diff.ts'
-import { describe, fingerprint, redact } from './mask.ts'
+import { describe, fingerprint, mask, redact } from './mask.ts'
 import type { MaskedFinding } from './mask.ts'
 import * as say from './messages.ts'
 import type { WriteTool } from './messages.ts'
@@ -714,6 +714,22 @@ function outputScan(mode: Mode, allowed: ReadonlySet<string>, rules: readonly Ru
   return scan
 }
 
+/** The secrets on disk at `path` whose masked form `content` would write in their place. */
+async function maskedOverwrite($: EngineInterface, path: string, content: string): Promise<MaskedFinding[]> {
+  let current: unknown
+  try {
+    current = await $.fs.read(path)
+  } catch {
+    return []
+  }
+  if (typeof current !== 'string') return []
+  const lost: MaskedFinding[] = []
+  for (const finding of scanText(current).findings) {
+    if (content.includes(mask(finding.value, finding.prefix)) && !content.includes(finding.value)) lost.push(await describe(finding))
+  }
+  return lost
+}
+
 /** Every string inside an MCP result, masked; binary fields are left alone. */
 async function maskDeep(value: unknown, take: (text: string) => Promise<string>, depth = 0): Promise<unknown> {
   if (typeof value === 'string') return take(value)
@@ -909,6 +925,11 @@ export const register: Register = (on, options) => {
   })
 
   on('tool.call', { tool: ['Edit', 'Write', 'NotebookEdit'] }, async ($, e, next) => {
+    // Claude saw the masked form of a secret this file holds: writing the file back from what it saw would replace the real value.
+    if (e.tool === 'Write' && e.content.includes('••••••')) {
+      const lost = await maskedOverwrite($, e.file_path, e.content)
+      if (lost.length > 0) return { deny: say.maskedOverwriteDeny(displayPathOf(e.file_path, await sessionCwd($)), lost) }
+    }
     const config = await getConfig($)
     const call = scanCall(e, customRules(config))
     if (call === undefined) return next(e)

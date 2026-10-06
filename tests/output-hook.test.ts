@@ -176,3 +176,25 @@ test('monitor mode reports a pasted secret and sends the message as typed', { op
   expect(r.text).toBe(`key ${secret}`)
   expect(env.findings()[0]).toMatchObject({ decision: 'warned' })
 })
+
+// --- Writing back what was masked ---------------------------------------------------
+
+test('a Write that would put the masked form over the real value on disk is denied', async ($, on) => {
+  const secret = token('github-token')
+  const onDisk = `export const token = "${secret}"\nexport const retries = 3\n`
+  const env = engine(on, {}, { disk: { '/work/app/config.ts': onDisk } })
+  on('tool.call', { tool: 'Write' }, () => ({ result: 'ok' }))
+  const masked = `ghp_••••••${secret.slice(-3)}`
+  const r = await $.tool.call({ tool: 'Write', file_path: '/work/app/config.ts', content: `// config\nexport const token = "${masked}"\nexport const retries = 5\n` })
+  expect(isDenied(r)).toBe(true)
+  expect(r.deny.includes('the real value would be lost')).toBe(true)
+  expect(r.deny.includes(secret)).toBe(false)
+  expect(env.disk['/work/app/config.ts']).toBe(onDisk)
+})
+
+test('a Write with masked-looking text over a file that holds no such secret goes on', async ($, on) => {
+  engine(on, {}, { disk: { '/work/app/notes.md': 'nothing here\n' } })
+  on('tool.call', { tool: 'Write' }, () => ({ result: 'ok' }))
+  const r = await $.tool.call({ tool: 'Write', file_path: '/work/app/notes.md', content: 'LeakStop shows keys as ghp_••••••abc\n' })
+  expect(r.result).toBe('ok')
+})
