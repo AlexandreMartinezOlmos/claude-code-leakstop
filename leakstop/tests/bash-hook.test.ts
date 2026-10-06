@@ -265,6 +265,16 @@ test('a sensitive read is held in strict mode too, and warns in monitor mode', {
   expect(env.commands).toEqual(['cat .env'])
 })
 
+test('printing .env from git history or through find is held like cat .env', async ($, on) => {
+  const env = toolsRun(on)
+  const asked = answerWith(on, CANCEL)
+  for (const command of ['git show HEAD:.env', 'git log -p -- .env', "find . -name '.env' -exec cat {} \\;", "find . -name .env | xargs cat"]) {
+    expect(isDenied(await bash($, command))).toBe(true)
+  }
+  expect(asked.questions.length).toBe(4)
+  expect(env.commands).toEqual([])
+})
+
 // --- Recursive searches --------------------------------------------------------------
 
 /** `find` lists `files`; git ignores none of them unless `ignored` says so. */
