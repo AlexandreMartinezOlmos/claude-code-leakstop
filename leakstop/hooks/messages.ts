@@ -282,3 +282,20 @@ export function outboundFileQuestion(tool: string, files: readonly string[]): st
 export function outboundFileDeny(tool: string, files: readonly string[]): string {
   return `LeakStop blocked this ${toolLabel(tool)} call: ${list(files)} hold secrets and would be sent ${destinationOf(tool)}. Do not send them. Send a copy without the secrets (for example .env.example with the values removed), or ask the user.`
 }
+
+// --- Tool output -----------------------------------------------------------------
+
+/** What the model reads after an output in which LeakStop masked secrets. */
+export function maskedContext(tool: string, findings: readonly MaskedFinding[]): string {
+  const what = findings.slice(0, 5).map(typeOf).join(', ')
+  const more = findings.length > 5 ? ` (and ${findings.length - 5} more)` : ''
+  return `LeakStop masked ${what}${more} in the output of this ${tool} call: the value never reached you and is not in the transcript. Do not try to print or read it another way; if the task needs it, use it from an environment variable or ask the user.`
+}
+
+/** The line above the prompt when an output carried a secret. */
+export function maskedLine(tool: string, finding: MaskedFinding, isMonitor: boolean): string {
+  return `LeakStop · ${finding.severity.toUpperCase()} · ${finding.label} in the output of ${tool}${isMonitor ? ' · monitor mode: this would have been masked' : ' · masked'}`
+}
+
+/** Instead of an output LeakStop could not check after the tool ran. */
+export const OUTPUT_FAILURE = 'LeakStop could not check the output of this call, so it was withheld. The call did run; do not run it again just to see its output.'

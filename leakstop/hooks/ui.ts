@@ -37,6 +37,8 @@ export function outcome(finding: StoredFinding): string {
       return finding.severity === 'critical' ? 'logged, not enforced' : 'warned'
     case 'passed':
       return 'passed (git ignores this file)'
+    case 'masked':
+      return 'masked in the output'
   }
 }
 
