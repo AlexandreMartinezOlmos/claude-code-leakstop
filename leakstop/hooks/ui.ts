@@ -53,7 +53,7 @@ export function bannerLine(banner: readonly StoredFinding[], paused: boolean, wi
   if (latest === undefined) return ''
   const more = banner.length > 1 ? ` (+${banner.length - 1} more)` : ''
   const head = `△ LeakStop · ${SEVERITY[latest.severity]} · ${latest.label} in ${where(latest)}${more}`
-  const tail = ` · ${latest.severity === 'critical' ? 'logged' : 'warned'} · /leakstop`
+  const tail = ` · ${latest.decision === 'masked' ? 'masked' : latest.severity === 'critical' ? 'logged' : 'warned'} · /leakstop`
   return room < tail.length + 12 ? fit(`${head}${tail}`, room) : `${fit(head, room - tail.length)}${tail}`
 }
 

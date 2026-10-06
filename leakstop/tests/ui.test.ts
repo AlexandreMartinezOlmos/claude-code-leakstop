@@ -134,3 +134,8 @@ test('a long list of allowed fingerprints is cut', () => {
   expect(text.includes('…and 15 more')).toBe(true)
   expect(text.split('\n').length).toBe(1 + 25 + 1 + 1)
 })
+
+test('the banner says masked when LeakStop masked the value', () => {
+  const finding = { fingerprint: 'sha256:0000000000000000', ruleId: 'github-token', label: 'GitHub token', severity: 'critical' as const, path: 'your message', line: 0, tool: 'prompt', decision: 'masked' as const, at: 0 }
+  expect(bannerLine([finding], false, 200)).toBe('△ LeakStop · CRITICAL · GitHub token in your message · masked · /leakstop')
+})
