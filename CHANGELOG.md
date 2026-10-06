@@ -2,6 +2,15 @@
 
 All notable changes to LeakStop. It follows [semantic versioning](https://semver.org); see "Stability and versioning" in the README for what is part of the public interface.
 
+## Unreleased
+
+- **Masks secrets in what tools return.** A secret printed by a command, found in a file Claude reads or returned by an MCP tool now reaches neither Claude nor the session's transcript: LeakStop replaces it with its masked form and tells Claude. That includes the copy of a large command output that Claude Code saves to disk. Real secrets are masked in `standard` mode, weaker signals too in `strict`; `monitor` only reports.
+- **Masks secrets pasted into your messages**, the same way. Claude Code's prompt history keeps what you typed.
+- **Holds sensitive files printed from git history or through `find`:** `git show HEAD:.env`, `git cat-file -p`, `git log -p -- .env`, `git blame`, and `find … -exec cat` or `| xargs cat` on a sensitive file.
+- **Asks before an MCP tool that names `.leakstop.json` runs**, as it already did for the file and shell tools.
+- The tests moved out of the plugin folder, so they are no longer installed with it; `node scripts/test.ts` runs them.
+- The icon has rounded corners.
+
 ## 1.0.2 - 2026-10-04
 
 Documentation only. No change to what LeakStop detects or how it decides.

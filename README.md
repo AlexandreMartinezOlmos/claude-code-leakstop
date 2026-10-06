@@ -120,7 +120,7 @@ To see it without any interruption, switch to [`monitor` mode](#protection-level
 
 ## Using it
 
-Most of the time you do nothing: LeakStop stays quiet until something looks dangerous. When it does, one of four things happens.
+Most of the time you do nothing: LeakStop stays quiet until something looks dangerous. When it does, one of five things happens.
 
 | What happens | When | What you see |
 | --- | --- | --- |
@@ -128,13 +128,16 @@ Most of the time you do nothing: LeakStop stays quiet until something looks dang
 | **Warn** | A weaker signal, like a JWT or a `password = "…"` that might be a test fixture | A line above the prompt, until your next message |
 | **Hold** | A real secret is about to be written, or a sensitive file or the whole environment is about to be printed | A question with numbered options. Anything other than "Allow once" (including closing the dialog) means **no** |
 | **Block** | A `git commit` or `git push` that would publish a secret | Denied straight away, with the reason sent to Claude |
+| **Mask** | A real secret shows up in what a tool returns, or in a message you send | The value is replaced by its masked form (`sk-ant-••••••3fA`) before Claude sees it, a line above the prompt says so, and Claude is told not to look for it another way |
 
 ### What it watches
 
 - **Files Claude writes or edits.** Private keys, and tokens from AWS, GitHub, GitLab, Anthropic, OpenAI, Stripe, Slack, Google, npm and Hugging Face; passwords inside URLs (`postgres://user:pass@host`); JWTs; `Authorization` headers; credentials in `.npmrc` and `.pypirc`; and `password = "…"`-style assignments. For an edit it only looks at the *new* text, so a secret that was already in the file does not raise a false alarm.
-- **Commands Claude runs.** A literal secret in a command (`curl -H "Authorization: Bearer …"`, `export TOKEN=…`, `--build-arg`); `cat`, `head`, `less` or `grep` of sensitive files; recursive searches such as `grep -r KEY .` when they would reach a sensitive file (inside Claude Code, a plain `grep` and `rg` skip files that git ignores, so an ignored `.env` is safe; a sensitive file that git does not ignore, `command grep`, `/usr/bin/grep` or `rg --no-ignore` are not); `printenv`, `env`, `echo $TOKEN`; and `git add -A` or `git add .` when it would stage a sensitive file that git does not ignore.
+- **Commands Claude runs.** A literal secret in a command (`curl -H "Authorization: Bearer …"`, `export TOKEN=…`, `--build-arg`); `cat`, `head`, `less` or `grep` of sensitive files; recursive searches such as `grep -r KEY .` when they would reach a sensitive file (inside Claude Code, a plain `grep` and `rg` skip files that git ignores, so an ignored `.env` is safe; a sensitive file that git does not ignore, `command grep`, `/usr/bin/grep` or `rg --no-ignore` are not); `printenv`, `env`, `echo $TOKEN`; a sensitive file printed from git history or through `find` (`git show HEAD:.env`, `git log -p -- .env`, `find . -name .env -exec cat {} \;`, `… | xargs cat`); and `git add -A` or `git add .` when it would stage a sensitive file that git does not ignore.
 - **Commits and pushes.** It reads the lines a `git commit` would add and the commits a `git push` would publish, and blocks them if they hold a secret.
 - **Files Claude reads.** Reading a sensitive file puts its contents in the conversation, so that is held too.
+- **What tools return.** When a command, a file Claude reads or an MCP tool *returns* a real secret, LeakStop masks it before Claude or the session's transcript gets it, including the copy of a large command output that Claude Code saves to disk. Weaker signals are only masked in `strict` mode. The command has still run: masking keeps the value out of the conversation, it does not undo anything.
+- **Your own messages.** A real secret you paste into the prompt is masked before it is sent, and Claude is told to ask you for an environment variable instead. Claude Code's prompt history (the up arrow) keeps what you typed: no plugin can reach it.
 - **What Claude sends out.** A secret in a `WebFetch` URL or prompt, a `WebSearch` query, an `Agent` prompt, a `SendMessage`, a push notification, feedback to Anthropic, an `Artifact` page or its database, a remote trigger, or *any argument of an MCP tool* is held before it leaves the session, because it cannot be taken back. `SendFile` and `Artifact` also send files: LeakStop reads them first, and holds `.env`, keys and other sensitive files outright. The question says where it would go (a web server, another agent, a page other people may open, an MCP server). `SendUserFile` and `SendUserMessage` are not watched: they only reach you.
 
 **Sensitive files** are recognised by name: `.env` and `.env.*` (but not `.env.example`, `.env.sample`, `.env.template`, `.env.dist` or `.env.defaults`), SSH private keys (`id_rsa`, `id_ed25519`…), `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `credentials.json`, `service-account*.json`, Terraform state, and `.npmrc` or `.pypirc` when they hold a token.
@@ -166,9 +169,9 @@ Placeholders (`your-api-key`, `changeme`, `<TOKEN>`), Amazon's documentation exa
 
 | Mode | What it does | Good for |
 | --- | --- | --- |
-| `standard` (default) | Holds real secrets, blocks risky commits and pushes, warns on weaker signals | Everyday use |
-| `strict` | Also holds weaker signals, and **blocks** reading sensitive files outright | Repos with customer or production data |
-| `monitor` | Never holds or blocks, only warns and logs | Trying LeakStop on a new repo to see what it would flag |
+| `standard` (default) | Holds real secrets, blocks risky commits and pushes, masks real secrets in what tools return and in your messages, warns on weaker signals | Everyday use |
+| `strict` | Also holds and masks weaker signals, and **blocks** reading sensitive files outright | Repos with customer or production data |
+| `monitor` | Never holds, blocks or masks, only warns and logs | Trying LeakStop on a new repo to see what it would flag |
 
 Change it from inside Claude Code with:
 
@@ -260,9 +263,9 @@ Claude Code mods are still an early-access feature. The oldest Claude Code versi
 
 LeakStop is a safety net, not a wall. Please read this part.
 
-- **It reads text; it does not run anything.** A secret that is base64-encoded, split across variables, built by a script (`python -c`, `node -e`) or read by a program is not seen. Commands such as `git show HEAD:.env` or `find -exec cat` are not covered either.
-- **It only watches the tools it knows send data out.** It scans `WebFetch`, `WebSearch`, `Agent`, `SendMessage`, `SendFile`, `Artifact`, `ArtifactData`, `ArtifactComments`, `PushNotification`, `SendFeedback`, `RemoteTrigger` and every MCP tool, but it cannot tell what an MCP tool *does* with what it is given. In particular, an MCP tool that writes files can edit `.leakstop.json` (the protection of that file covers `Write`, `Edit`, `NotebookEdit` and shell commands) and can write a secret into a file git ignores without the ignored-file exemption applying: it is held like any other secret leaving the session.
-- **It does not redact.** It stops an action; it does not rewrite what you type. A secret you paste into your own message, or the contents of a file you chose to allow, reach the model as they are.
+- **It reads text; it does not run anything.** A secret that is base64-encoded, split across variables, built by a script (`python -c`, `node -e`) or read by a program is not seen before the command runs; if it is printed in plain text, it is masked in the output.
+- **It only watches the tools it knows send data out.** It scans `WebFetch`, `WebSearch`, `Agent`, `SendMessage`, `SendFile`, `Artifact`, `ArtifactData`, `ArtifactComments`, `PushNotification`, `SendFeedback`, `RemoteTrigger` and every MCP tool, but it cannot tell what an MCP tool *does* with what it is given. In particular, an MCP tool that writes files can edit `.leakstop.json` under another name for it (the question is asked when its arguments name the file, as for `Write`, `Edit`, `NotebookEdit` and shell commands) and can write a secret into a file git ignores without the ignored-file exemption applying: it is held like any other secret leaving the session.
+- **Masking is not undoing.** A command whose output is masked has still run, and anything it sent elsewhere is gone. A value you allowed for good is not masked. Claude Code's prompt history keeps what you typed, and an output larger than 4 MiB is not checked (LeakStop says so).
 - **It can be switched off without telling you.** `--safe-mode`, `--bare`, `disableAllHooks` in your settings, an organisation policy, or Anthropic switching installed mods off remotely all stop it. Check `/plugin` now and then.
 - **Where nothing can be drawn, it cannot ask.** In `claude -p`, the Agent SDK and the cloud, anything LeakStop would hold is **denied** (it never hangs), which can break an automation; use `monitor` mode there. Warnings are written to the transcript instead of the banner. The VS Code chat panel does show the question (as one line, since it runs line breaks together) but draws no banner or history panel: `/leakstop` answers as text.
 - **It also fires on harmless things sometimes.** Weaker signals can be test data or documentation examples. That is why they only warn by default, and why `ignorePaths` exists.
