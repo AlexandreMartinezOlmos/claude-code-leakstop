@@ -231,14 +231,14 @@ LeakStop runs with the same access as Claude Code and is not sandboxed, so it is
       ui.render{component=AbovePrompt}, ui.render{component=Pane, requestId=leakstop},
       tool.call{tool=Edit|Write|NotebookEdit}, tool.call{tool=Bash}, tool.call{tool=Read},
       tool.call{tool=WebFetch|WebSearch|Agent|SendMessage|SendFile|Artifact|…},
-      tool.call{tool=/"^mcp__"/}
-  ./leakstop.tsx calls: $.clock.now, $.command.register, $.fs.exists, $.fs.read, $.process.run,
-      $.session.cwd, $.session.surfaces, $.state.get, $.state.set, $.store.delete, $.store.get,
-      $.store.set, $.ui.ask, $.ui.close, $.ui.log, $.ui.open, $.ui.resolve
+      tool.call{tool=/"^mcp__"/}, tool.call{tool=Bash|Read}, tool.call{tool=/"^mcp__"/}
+  ./leakstop.tsx calls: $.clock.now, $.command.register, $.fs.exists, $.fs.read, $.fs.write,
+      $.process.run, $.session.cwd, $.session.surfaces, $.state.get, $.state.set, $.store.delete,
+      $.store.get, $.store.set, $.ui.ask, $.ui.close, $.ui.log, $.ui.open, $.ui.resolve, $.ui.status
   ✔ Validation passed
   ```
 
-  There is no `$.http`, no `$.model` and no `$.env` in that list. [PRIVACY.md](PRIVACY.md) says what it keeps and where.
+  There is no `$.http`, no `$.model` and no `$.env` in that list. `$.fs.write` is used for one thing only: masking a secret in the copy of a large command output that Claude Code saves under its own folder. [PRIVACY.md](PRIVACY.md) says what it keeps and where.
 - **It never approves anything for you.** After a pass, Claude Code's own permission prompts and rules still apply.
 - **Secrets stay masked.** Only a prefix and the last three characters are ever shown, and findings are tracked by a hash.
 - **It fails closed.** If LeakStop itself errors or times out, the action is denied (in `monitor` mode it is allowed instead).
