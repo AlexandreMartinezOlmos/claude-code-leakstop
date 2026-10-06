@@ -135,3 +135,44 @@ test('a failure after the tool ran withholds the output and does not run the too
   expect(r.deny.includes('do not run it again')).toBe(true)
   expect(env.runs).toEqual(['bash show.sh'])
 })
+
+// --- Secrets pasted into a message ------------------------------------------------
+
+/** The engine beneath: answers prompt.submit with what reached it. */
+function promptEngine(on: any) {
+  const written: Record<string, any> = {}
+  on('clock.now', () => ({ value: 1_700_000_000_000 }))
+  on('session.surfaces', () => ({ value: [] }))
+  on('state.set', { plugin: 'leakstop' }, (_$: any, e: any, next: any) => {
+    written[e.key] = e.value
+    return next(e)
+  })
+  on('prompt.submit', (_$: any, e: any) => ({ text: e.text, context: e.context }))
+  return { findings: () => written.findings ?? [], banner: () => written.banner ?? [] }
+}
+
+test('a secret pasted into a message is masked before the model gets it, and the model is told', async ($, on) => {
+  const secret = token()
+  const env = promptEngine(on)
+  const r = await $.prompt.submit({ text: `here is my key ${secret}, set up the client`, origin: { kind: 'user' } })
+  expect(r.text).toBe(`here is my key sk-ant-••••••${secret.slice(-3)}, set up the client`)
+  expect(r.context.some((c: string) => c.includes('the user pasted into this message'))).toBe(true)
+  expect(env.findings()[0]).toMatchObject({ tool: 'prompt', path: 'your message', decision: 'masked' })
+  expect(env.banner()).toHaveLength(1)
+  expect(JSON.stringify([r, env.findings()]).includes(secret)).toBe(false)
+})
+
+test('a message with no secret goes through as typed', async ($, on) => {
+  promptEngine(on)
+  const r = await $.prompt.submit({ text: 'refactor the parser', origin: { kind: 'user' } })
+  expect(r.text).toBe('refactor the parser')
+  expect(r.context).toBeUndefined()
+})
+
+test('monitor mode reports a pasted secret and sends the message as typed', { options: { mode: 'monitor' } }, async ($, on) => {
+  const secret = token()
+  const env = promptEngine(on)
+  const r = await $.prompt.submit({ text: `key ${secret}`, origin: { kind: 'user' } })
+  expect(r.text).toBe(`key ${secret}`)
+  expect(env.findings()[0]).toMatchObject({ decision: 'warned' })
+})

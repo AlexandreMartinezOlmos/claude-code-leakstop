@@ -788,7 +788,22 @@ export const register: Register = (on, options) => {
   // is anything that is not one of those automated senders.
   on('prompt.submit', async ($, e, next) => {
     if (!AUTOMATED.has(e.origin?.kind ?? '')) await clearBanner($)
-    return next(e)
+    // A secret pasted into the message is masked before the model or the transcript gets it.
+    // The prompt history (the up arrow) is the engine's and keeps what was typed.
+    try {
+      const { value: paused = false } = await $.state.get(pausedRef)
+      if (paused) return next(e)
+      const config = await getConfig($)
+      const scan = outputScan(mode, await allowedFingerprints($, config), customRules(config))
+      const text = await scan.take(e.text)
+      const notes = [...scan.notes.values()]
+      if (notes.length === 0) return next(e)
+      await record($, 'prompt', 'your message', notes, mode === 'monitor' ? 'warned' : 'masked')
+      if (mode === 'monitor') return next(e)
+      return next({ ...e, text, context: [...(e.context ?? []), say.promptMaskedContext(notes)] })
+    } catch {
+      return next(e) // a prompt is never blocked
+    }
   })
 
   on('command.run', { command: 'leakstop' }, async ($, e) => {

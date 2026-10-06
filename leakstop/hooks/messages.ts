@@ -299,3 +299,9 @@ export function maskedLine(tool: string, finding: MaskedFinding, isMonitor: bool
 
 /** Instead of an output LeakStop could not check after the tool ran. */
 export const OUTPUT_FAILURE = 'LeakStop could not check the output of this call, so it was withheld. The call did run; do not run it again just to see its output.'
+
+/** What the model reads after a message in which LeakStop masked a pasted secret. */
+export function promptMaskedContext(findings: readonly MaskedFinding[]): string {
+  const what = findings.slice(0, 5).map(typeOf).join(', ')
+  return `LeakStop masked ${what} that the user pasted into this message: the value never reached you. If the task needs it, ask the user to put it in an environment variable or a git-ignored file instead of the chat.`
+}

@@ -38,7 +38,7 @@ export function outcome(finding: StoredFinding): string {
     case 'passed':
       return 'passed (git ignores this file)'
     case 'masked':
-      return 'masked in the output'
+      return finding.tool === 'prompt' ? 'masked before it was sent' : 'masked in the output'
   }
 }
 
