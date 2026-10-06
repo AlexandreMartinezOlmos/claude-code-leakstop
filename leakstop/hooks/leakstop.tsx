@@ -127,9 +127,9 @@ async function clearBanner($: EngineInterface): Promise<void> {
   if (value.length > 0) await $.state.set(bannerRef, [])
 }
 
-async function setPaused($: EngineInterface, paused: boolean): Promise<void> {
+async function setPaused($: EngineInterface, paused: boolean, hasStatus: boolean): Promise<void> {
   await $.state.set(pausedRef, paused)
-  showStatus($, paused)
+  if (hasStatus) showStatus($, paused)
 }
 
 /** The line under the prompt that says LeakStop is on: when it is missing, nothing is protecting the session. */
@@ -796,13 +796,17 @@ async function maskOutput($: EngineInterface, e: ToolCallInput, r: any, mode: Mo
 
 export const register: Register = (on, options) => {
   const mode: Mode = options.mode === 'monitor' || options.mode === 'strict' ? options.mode : 'standard'
+  // Off by default: the line takes a row under the prompt in every session.
+  const hasStatus = options.statusLine === true
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'leakstop', description: 'Show LeakStop findings, pause or resume protection, or allow a finding' })
     const config = await loadConfig($)
     for (const warning of config.warnings.slice(0, 5)) $.ui.log(`LeakStop: .leakstop.json: ${warning}`)
-    const { value: paused = false } = await $.state.get(pausedRef)
-    showStatus($, paused)
+    if (hasStatus) {
+      const { value: paused = false } = await $.state.get(pausedRef)
+      showStatus($, paused)
+    }
     return next(e)
   })
 
@@ -860,11 +864,11 @@ export const register: Register = (on, options) => {
       return { text: `LeakStop: /leakstop ${args.kind} only works when you type it yourself.` }
     }
     if (args.kind === 'pause') {
-      await setPaused($, true)
+      await setPaused($, true, hasStatus)
       return { text: 'LeakStop paused: nothing is checked until you run /leakstop resume. Changes to .leakstop.json are still held.' }
     }
     if (args.kind === 'resume') {
-      await setPaused($, false)
+      await setPaused($, false, hasStatus)
       return { text: 'LeakStop resumed.' }
     }
     if (args.kind === 'reload') {
@@ -925,7 +929,7 @@ export const register: Register = (on, options) => {
           </Box>
         ))}
         <Box gap={2}>
-          <Button key="pause" hotkey="1" label={paused ? 'Resume' : 'Pause'} onPress={() => setPaused($, !paused)} />
+          <Button key="pause" hotkey="1" label={paused ? 'Resume' : 'Pause'} onPress={() => setPaused($, !paused, hasStatus)} />
           <Button key="close" hotkey="2" label="Close" onPress={() => $.ui.close({ id: PANE })} />
         </Box>
       </Box>

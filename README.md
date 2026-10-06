@@ -197,6 +197,16 @@ Either way it is saved in your Claude Code settings file:
 
 The mode lives in *your* settings on purpose: a repository you clone cannot lower your protection.
 
+### Status line (optional)
+
+LeakStop can be switched off without telling you (see [Limitations](#limitations)). Turn on the `statusLine` option and a line under the prompt says `◆ LeakStop on`, or that it is paused; when the line is missing, nothing is protecting the session. It is off by default because it takes a row in every session. Set it the same way as the mode, for example:
+
+```
+claude plugin install leakstop@leakstop --config statusLine=true
+```
+
+It applies from the next session.
+
 ## Per-project settings (optional)
 
 Drop a `.leakstop.json` in the project root to tune LeakStop for that project:
@@ -251,7 +261,7 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 LeakStop follows [semantic versioning](https://semver.org). Within 1.x these do not change in a breaking way:
 
 - the `/leakstop` subcommands and what they do,
-- the `mode` option and its three values,
+- the `mode` option and its three values, and the `statusLine` option,
 - the fields of `.leakstop.json` and what they mean,
 - the install id, `leakstop@leakstop`.
 
@@ -266,7 +276,7 @@ LeakStop is a safety net, not a wall. Please read this part.
 - **It reads text; it does not run anything.** A secret that is base64-encoded, split across variables, built by a script (`python -c`, `node -e`) or read by a program is not seen before the command runs; if it is printed in plain text, it is masked in the output.
 - **It only watches the tools it knows send data out.** It scans `WebFetch`, `WebSearch`, `Agent`, `SendMessage`, `SendFile`, `Artifact`, `ArtifactData`, `ArtifactComments`, `PushNotification`, `SendFeedback`, `RemoteTrigger` and every MCP tool, but it cannot tell what an MCP tool *does* with what it is given. In particular, an MCP tool that writes files can edit `.leakstop.json` under another name for it (the question is asked when its arguments name the file, as for `Write`, `Edit`, `NotebookEdit` and shell commands) and can write a secret into a file git ignores without the ignored-file exemption applying: it is held like any other secret leaving the session.
 - **Masking is not undoing.** A command whose output is masked has still run, and anything it sent elsewhere is gone. A value you allowed for good is not masked. Claude Code's prompt history keeps what you typed, and an output larger than 4 MiB is not checked (LeakStop says so).
-- **It can be switched off without telling you.** `--safe-mode`, `--bare`, `disableAllHooks` in your settings, an organisation policy, or Anthropic switching installed mods off remotely all stop it. Check `/plugin` now and then.
+- **It can be switched off without telling you.** `--safe-mode`, `--bare`, `disableAllHooks` in your settings, an organisation policy, or Anthropic switching installed mods off remotely all stop it. Check `/plugin` now and then, or turn on the [status line](#status-line-optional).
 - **Where nothing can be drawn, it cannot ask.** In `claude -p`, the Agent SDK and the cloud, anything LeakStop would hold is **denied** (it never hangs), which can break an automation; use `monitor` mode there. Warnings are written to the transcript instead of the banner. The VS Code chat panel does show the question (as one line, since it runs line breaks together) but draws no banner or history panel: `/leakstop` answers as text.
 - **It also fires on harmless things sometimes.** Weaker signals can be test data or documentation examples. That is why they only warn by default, and why `ignorePaths` exists.
 - **WSL sessions of the desktop app** do not run plugins, so LeakStop is not active there.

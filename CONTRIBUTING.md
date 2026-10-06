@@ -82,4 +82,4 @@ The version in `plugin.json` is what makes installed copies update, so it must c
 
 ## Versioning
 
-LeakStop follows [semantic versioning](https://semver.org). The public surface is documented in the README: the `/leakstop` subcommands, the `mode` option, and the fields of `.leakstop.json`. Those do not change in a 1.x release except to add to them. New detection rules may arrive in a minor release; a fix for a missed secret or a false positive is a patch.
+LeakStop follows [semantic versioning](https://semver.org). The public surface is documented in the README: the `/leakstop` subcommands, the `mode` and `statusLine` options, and the fields of `.leakstop.json`. Those do not change in a 1.x release except to add to them. New detection rules may arrive in a minor release; a fix for a missed secret or a false positive is a patch.

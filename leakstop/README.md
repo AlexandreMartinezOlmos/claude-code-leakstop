@@ -32,7 +32,9 @@ Set the `mode` option with `/plugin configure leakstop@leakstop`:
 
 - `standard` (default) holds real secrets, blocks risky commits and pushes, masks real secrets in what tools return and in your messages, and warns on weaker signals.
 - `strict` also holds and masks weaker signals and blocks reading sensitive files outright.
-- `monitor` never holds, blocks or masks, it only warns and logs. It is the safest way to try LeakStop on a new repository.
+- `monitor` never holds, blocks or masks, it only warns and logs.
+
+Turn on the `statusLine` option (off by default) to keep a line under the prompt that says LeakStop is on; when it is missing, nothing is protecting the session. It is the safest way to try LeakStop on a new repository.
 
 ## How it works
 
