@@ -37,8 +37,7 @@ jobs:
       - name: Validate the marketplace
         run: claude plugin validate .
       - name: Test the plugin
-        working-directory: leakstop
-        run: claude plugin test
+        run: node scripts/test.ts
 
   repository:
     name: Repository checks

@@ -31,7 +31,7 @@ CI runs these on every pull request, with the oldest supported Claude Code and t
 ```
 claude plugin validate ./leakstop --strict
 claude plugin validate .
-(cd leakstop && claude plugin test)
+node scripts/test.ts
 node scripts/check-release.ts
 node scripts/calibrate.ts --check .
 ```
@@ -62,9 +62,9 @@ Only `leakstop.tsx` receives `$`. Everything else is pure functions, so it can b
 - **Never show or store a full secret.** Only a short prefix and the last three characters.
 - **Err on the side of looking.** A false positive is a question; a false negative is a leak. But a rule that fires on ordinary code gets switched off by its users, so add a test for the harmless case too.
 - **Fail closed.** An internal error denies the action (in `monitor` mode it allows).
-- **Test secrets are generated at run time.** Use the helpers in `leakstop/tests/secrets.ts`. Never write a complete token in the repository: scanners flag it, and so does LeakStop's own check in CI.
+- **Test secrets are generated at run time.** Use the helpers in `tests/secrets.ts`. Never write a complete token in the repository: scanners flag it, and so does LeakStop's own check in CI.
 - **English everywhere**: code, comments, commit messages, documentation and the text users read.
-- **Every change comes with tests**, and `claude plugin test` must stay green.
+- **Every change comes with tests**, and `node scripts/test.ts` must stay green. The tests live in `tests/`, outside the plugin folder, so that nobody who installs LeakStop gets them; the script runs them beside a temporary copy of the plugin, because `claude plugin test` only looks inside a mod's folder.
 
 ## Pull requests
 
@@ -75,7 +75,7 @@ Only `leakstop.tsx` receives `$`. Everything else is pure functions, so it can b
 ## Releasing (maintainer)
 
 1. Branch `release/vX.Y.Z` from `develop`. Set `version` in `leakstop/.claude-plugin/plugin.json` and rename `Unreleased` in `CHANGELOG.md` to the version, with its date and its link at the bottom. `node scripts/check-release.ts` checks that they agree.
-2. Run the checks above. Merge into `main` with `--no-ff`, tag `vX.Y.Z` and publish a GitHub release whose notes are the changelog entry plus the minimum Claude Code version.
+2. Run the checks above and open a pull request from `release/vX.Y.Z` to `main`: `main` only accepts commits whose CI passed, so it cannot be pushed to directly. When CI is green, merge it with a merge commit, tag `vX.Y.Z` on that merge and publish a GitHub release whose notes are the changelog entry plus the minimum Claude Code version.
 3. Merge `main` back into `develop`.
 
 The version in `plugin.json` is what makes installed copies update, so it must change with every release.

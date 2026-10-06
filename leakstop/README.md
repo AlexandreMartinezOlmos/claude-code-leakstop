@@ -59,13 +59,12 @@ It also reads the files that a tool call is about to write, send or open, and `.
 
 Nothing. LeakStop has no network access, does not call a model and sends no data anywhere. The only things it produces are the question it shows you, the warning line, the findings panel, and the short reason it gives Claude when it denies an action, which only ever shows a masked value.
 
-It never reads your environment variables or any credential from your machine. Names such as `GITHUB_TOKEN` appear only inside the advice it gives Claude ("read the value from an environment variable instead").
+It never reads your environment variables or any credential from your machine. The names of environment variables appear only inside the advice it gives Claude ("read the value from an environment variable instead").
 
-## Test fixtures and detection patterns
+## Detection patterns
 
-The `tests` folder and the detector contain text that looks like a credential sent to a server, and it is not one:
+The detector contains text that looks like a credential sent to a server, and it is not one:
 
-- The tests build fake secrets at run time and put them in example commands and tool inputs, next to made-up hosts such as `api.example.org` and `example.com`, and next to variable names such as `ANTHROPIC_API_KEY`, to check that LeakStop holds them. The plugin never executes those strings.
 - `hooks/commands.ts` and `hooks/detect.ts` recognise commands such as `python -c` and `node -e`, and names such as `TOKEN` or `.npmrc`, as patterns to look for in the text of a command. They only read the text. LeakStop never runs that code, never reads the value of an environment variable and never sends anything out.
 
 ## Privacy and trust
