@@ -919,6 +919,11 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => onFailure(mode, next) ?? next(e))
 
   on('tool.call', { tool: /^mcp__/ }, async ($, e, next) => {
+    // An MCP tool that names .leakstop.json may rewrite it: ask, as for Write, Edit and the shell, even when paused.
+    if (JSON.stringify(e).includes('.leakstop.json')) {
+      const guard = await checkConfig($, e.tool, '.leakstop.json', mode)
+      if (guard !== undefined) return { deny: (guard as { deny: string }).deny }
+    }
     const verdict = await guardOutbound($, e, mode)
     return verdict === undefined ? next(e) : { deny: (verdict as { deny: string }).deny }
   }).catch(($, e, next) => onFailure(mode, next) ?? next(e))
