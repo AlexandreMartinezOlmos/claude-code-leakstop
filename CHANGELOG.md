@@ -2,7 +2,7 @@
 
 All notable changes to LeakStop. It follows [semantic versioning](https://semver.org); see "Stability and versioning" in the README for what is part of the public interface.
 
-## Unreleased
+## 1.1.1 - 2026-10-12
 
 No change to what LeakStop detects or how it decides.
 
@@ -87,7 +87,8 @@ First release. Requires Claude Code 2.1.287 or later.
 
 Not in this release: redacting secrets pasted into the prompt, and redacting the result of a read.
 
-[Unreleased]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.1.0...develop
+[Unreleased]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.1.1...develop
+[1.1.1]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/compare/v1.0.0...v1.0.1
