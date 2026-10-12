@@ -60,7 +60,7 @@ type Verdict = { deny: string } | { command: string } | undefined
 /** True when git ignores `path`. Anything unexpected (not a repo, no git) reads as "not ignored". */
 async function isIgnored($: EngineInterface, path: string): Promise<boolean> {
   try {
-    const result = await $.process.run(['git', 'check-ignore', '-q', '--', path], { timeoutMs: 5000 })
+    const result = await $.process.run(['git', 'check-ignore', '-q', '-z', '--stdin'], { timeoutMs: 5000, stdin: `${path}\0` })
     return result.exitCode === 0
   } catch {
     return false
@@ -308,10 +308,47 @@ async function isSensitiveFile($: EngineInterface, path: string, dir?: string): 
   }
 }
 
-async function git($: EngineInterface, args: readonly string[], dir?: string): Promise<{ isOk: boolean; stdout: string; isTruncated: boolean }> {
-  const init = dir === undefined ? { timeoutMs: GIT_TIMEOUT_MS } : { cwd: dir, timeoutMs: GIT_TIMEOUT_MS }
-  const result = await $.process.run(['git', ...args], init)
-  return { isOk: result.exitCode === 0, stdout: result.stdout, isTruncated: result.isStdoutTruncated }
+type GitOutput = { isOk: boolean; stdout: string; isTruncated: boolean }
+
+const gitInit = (dir?: string) => (dir === undefined ? { timeoutMs: GIT_TIMEOUT_MS } : { cwd: dir, timeoutMs: GIT_TIMEOUT_MS })
+
+const gitOutput = (result: { exitCode: number; stdout: string; isStdoutTruncated: boolean }): GitOutput => ({
+  isOk: result.exitCode === 0,
+  stdout: result.stdout,
+  isTruncated: result.isStdoutTruncated,
+})
+
+// Every git command LeakStop runs is one of these, with its arguments written out in full: nothing
+// about a command is built from input. The folder the command runs in is the only variable part.
+
+/** Files git does not track and does not ignore. */
+async function gitUntracked($: EngineInterface, dir?: string): Promise<GitOutput> {
+  return gitOutput(await $.process.run(['git', 'ls-files', '--others', '--exclude-standard', '-z'], gitInit(dir)))
+}
+
+/** Tracked files with changes that are not staged. */
+async function gitModified($: EngineInterface, dir?: string): Promise<GitOutput> {
+  return gitOutput(await $.process.run(['git', 'diff', '--name-only', '-z'], gitInit(dir)))
+}
+
+/** What a commit would contain. */
+async function gitStagedDiff($: EngineInterface, dir?: string): Promise<GitOutput> {
+  return gitOutput(await $.process.run(['git', 'diff', '--cached', '--no-color', '-U0'], gitInit(dir)))
+}
+
+/** Every change that is not staged yet, in the whole repository. */
+async function gitUnstagedDiff($: EngineInterface, dir?: string): Promise<GitOutput> {
+  return gitOutput(await $.process.run(['git', 'diff', '--no-color', '-U0'], gitInit(dir)))
+}
+
+/** The changes that are not staged yet under the folder, with paths relative to it. */
+async function gitUnstagedDiffHere($: EngineInterface, dir?: string): Promise<GitOutput> {
+  return gitOutput(await $.process.run(['git', 'diff', '--relative', '--no-color', '-U0'], gitInit(dir)))
+}
+
+/** The added lines of every commit that no remote has. */
+async function gitUnpushedLog($: EngineInterface, dir?: string): Promise<GitOutput> {
+  return gitOutput(await $.process.run(['git', 'log', '-p', '--no-color', '--format=', 'HEAD', '--not', '--remotes'], gitInit(dir)))
 }
 
 const names = (output: string): string[] => output.split('\0').filter((name) => name !== '')
@@ -415,28 +452,18 @@ async function checkSensitive($: EngineInterface, facts: CommandFacts, mode: Mod
   return command === undefined ? undefined : { command }
 }
 
-/** Sensitive files a recursive search could reach, found by looking in the folders it was given. */
-const FIND_SENSITIVE: readonly string[] = [
-  '(',
-  ...['.env', '.env.*', '*.env', '*.pem', '*.key', '*.p12', '*.pfx', 'id_rsa*', 'id_dsa*', 'id_ecdsa*', 'id_ed25519*', 'credentials.json', 'service-account*.json', '*.tfstate', '*.tfstate.backup'].flatMap((name, i) => (i === 0 ? ['-name', name] : ['-o', '-name', name])),
-  ')',
-  '-type',
-  'f',
-  '-not',
-  '-path',
-  '*/node_modules/*',
-  '-not',
-  '-path',
-  '*/.git/*',
-]
-
 /** `grep -r KEY .` reads `.env` too: grep ignores .gitignore and hidden-file rules. Hold when a sensitive file is within reach. */
 async function checkSearch($: EngineInterface, search: Search, mode: Mode, allowed: ReadonlySet<string>): Promise<Verdict> {
   const found: string[] = []
   for (const dir of search.dirs.slice(0, 5)) {
     try {
-      const result = await $.process.run(['find', dir, '-maxdepth', '8', ...FIND_SENSITIVE], { timeoutMs: 5000 })
-      for (const file of names(result.stdout.replace(/\n/g, '\0'))) found.push(file.replace(/^\.\//, ''))
+      // The command is fixed text; the folder it looks in is its working directory.
+      const result = await $.process.run(
+        ['find', '.', '-maxdepth', '8', '(', '-name', '.env', '-o', '-name', '.env.*', '-o', '-name', '*.env', '-o', '-name', '*.pem', '-o', '-name', '*.key', '-o', '-name', '*.p12', '-o', '-name', '*.pfx', '-o', '-name', 'id_rsa*', '-o', '-name', 'id_dsa*', '-o', '-name', 'id_ecdsa*', '-o', '-name', 'id_ed25519*', '-o', '-name', 'credentials.json', '-o', '-name', 'service-account*.json', '-o', '-name', '*.tfstate', '-o', '-name', '*.tfstate.backup', ')', '-type', 'f', '-not', '-path', '*/node_modules/*', '-not', '-path', '*/.git/*'],
+        { cwd: dir, timeoutMs: 5000 },
+      )
+      const base = dir.replace(/\/+$/, '')
+      for (const file of names(result.stdout.replace(/\n/g, '\0'))) found.push(`${base}/${file.replace(/^\.\//, '')}`.replace(/^\.\//, ''))
     } catch {
       // A folder that cannot be listed (or takes too long) is not a reason to block the search.
     }
@@ -467,8 +494,8 @@ async function checkSearch($: EngineInterface, search: Search, mode: Mode, allow
 
 /** `git add -A` or `.` (or a named path) that would stage sensitive files git does not ignore. */
 async function checkGitAdd($: EngineInterface, op: Extract<GitOp, { kind: 'add' }>, mode: Mode, allowed: ReadonlySet<string>): Promise<Verdict> {
-  const untracked = await git($, ['ls-files', '--others', '--exclude-standard', '-z'], op.dir)
-  const modified = await git($, ['diff', '--name-only', '-z'], op.dir)
+  const untracked = await gitUntracked($, op.dir)
+  const modified = await gitModified($, op.dir)
   if (!untracked.isOk && !modified.isOk) return undefined
   const candidates = [...new Set([...names(untracked.stdout), ...names(modified.stdout)])].filter((file) => op.isAll || isInScope(file, op.paths))
 
@@ -494,7 +521,7 @@ type Pending = { findings: DiffFinding[]; isTruncated: boolean }
 
 /** What a commit is about to contain: the staged diff and, when the command stages first, the rest. */
 async function pendingForCommit($: EngineInterface, op: Extract<GitOp, { kind: 'commit' }>, config: StoredConfig): Promise<Pending> {
-  const cached = await git($, ['diff', '--cached', '--no-color', '-U0'], op.dir)
+  const cached = await gitStagedDiff($, op.dir)
   if (!cached.isOk) return { findings: [], isTruncated: false }
   const diffs = [cached.stdout]
   let isTruncated = cached.isTruncated
@@ -503,11 +530,7 @@ async function pendingForCommit($: EngineInterface, op: Extract<GitOp, { kind: '
   const stagedPaths = op.staging.flatMap((s) => (s.isAll ? [] : s.paths))
   // `-a`, or a `git add` earlier in the same command, stages tracked changes that are not staged yet.
   if (op.isAll || stagesAll) {
-    const unstaged = await git($, ['diff', '--no-color', '-U0'], op.dir)
-    if (unstaged.isOk) diffs.push(unstaged.stdout)
-    isTruncated ||= unstaged.isTruncated
-  } else if (stagedPaths.length > 0) {
-    const unstaged = await git($, ['diff', '--no-color', '-U0', '--', ...stagedPaths], op.dir)
+    const unstaged = await gitUnstagedDiff($, op.dir)
     if (unstaged.isOk) diffs.push(unstaged.stdout)
     isTruncated ||= unstaged.isTruncated
   }
@@ -515,9 +538,16 @@ async function pendingForCommit($: EngineInterface, op: Extract<GitOp, { kind: '
   const extraRules = customRules(config)
   const findings = scanDiff(diffs.join('\n'), extraRules).findings
 
+  // Only the named paths are staged: of the changes not staged yet, keep the findings that are in them.
+  if (!op.isAll && !stagesAll && stagedPaths.length > 0) {
+    const unstaged = await gitUnstagedDiffHere($, op.dir)
+    if (unstaged.isOk) findings.push(...scanDiff(unstaged.stdout, extraRules).findings.filter((f) => isInScope(f.path, stagedPaths)))
+    isTruncated ||= unstaged.isTruncated
+  }
+
   // New files that an earlier `git add` in the same command would stage.
   if (stagesAll || stagedPaths.length > 0) {
-    const untracked = await git($, ['ls-files', '--others', '--exclude-standard', '-z'], op.dir)
+    const untracked = await gitUntracked($, op.dir)
     const files = names(untracked.stdout).filter((file) => stagesAll || isInScope(file, stagedPaths))
     for (const file of files.slice(0, MAX_UNTRACKED_READ)) {
       try {
@@ -533,7 +563,7 @@ async function pendingForCommit($: EngineInterface, op: Extract<GitOp, { kind: '
 
 /** What a push is about to publish: the added lines of every commit no remote has. */
 async function pendingForPush($: EngineInterface, op: Extract<GitOp, { kind: 'push' }>, config: StoredConfig): Promise<Pending> {
-  const log = await git($, ['log', '-p', '--no-color', '--format=', 'HEAD', '--not', '--remotes'], op.dir)
+  const log = await gitUnpushedLog($, op.dir)
   if (!log.isOk) return { findings: [], isTruncated: false }
   return { findings: scanDiff(log.stdout, customRules(config)).findings, isTruncated: log.isTruncated }
 }

@@ -54,12 +54,16 @@ The exception for inputs: when a `Bash` command is a single plain view of an env
 
 ## What it runs
 
-LeakStop starts two programs, both read-only and local, with a time limit:
+LeakStop starts two programs, both read-only and local, with a time limit. Every command is fixed text in the code: its arguments are never built from what a tool call contains.
 
-- `git`, in the project folder, with fixed arguments: `check-ignore` (is this file ignored?), `ls-files --others --exclude-standard` and `diff --name-only` (what would `git add .` stage?), `diff` and `diff --cached` (what would `git commit` add?), and `log -p` over the commits that are not on a remote yet (what would `git push` publish?). None of these writes anything or uses the network. The path or folder is the only variable part.
-- `find`, up to eight levels deep, to see whether a recursive `grep` or `rg` would reach a sensitive file such as `.env` or a private key.
+- `git`, in the project folder. The commands are `check-ignore -q -z --stdin` (is this file ignored? the path is sent on standard input), `ls-files --others --exclude-standard -z` and `diff --name-only -z` (what would `git add .` stage?), `diff --cached`, `diff` and `diff --relative` (what would `git commit` add?), and `log -p HEAD --not --remotes` (what would `git push` publish?). None of these writes anything or uses the network.
+- `find`, up to eight levels deep, started in the folder a recursive `grep` or `rg` names, to see whether that search would reach a sensitive file such as `.env` or a private key. Its arguments are fixed; the folder is its working directory.
 
 It also reads the files that a tool call is about to write, send or open, `.leakstop.json`, and the saved copy of a large command output, only to scan them. It keeps hashes of what you allow for good (`/leakstop allow`) in Claude Code's plugin store, and the findings of the session in Claude Code's session state.
+
+## What it writes
+
+Only one thing: the copy of a large command output that Claude Code saves in a `tool-results` folder under its own folder in your home directory, and only to replace a secret in it by its masked form. LeakStop never writes a build, start-up, settings or instructions file, or anything in your project.
 
 ## What it sends and where
 
