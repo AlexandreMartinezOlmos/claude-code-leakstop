@@ -2,6 +2,13 @@
 
 All notable changes to LeakStop. It follows [semantic versioning](https://semver.org); see "Stability and versioning" in the README for what is part of the public interface.
 
+## Unreleased
+
+No change to what LeakStop detects or how it decides.
+
+- **Every program LeakStop starts now has its arguments written out in full.** The path that `git check-ignore` is asked about travels on standard input instead of being an argument, the folder a search is checked in is the working directory of `find`, and the commands that read a diff are separate, fixed commands: a commit of named files takes the changes under the current folder and keeps the findings that are in those files. Anthropic's directory asks for a command it can read in full.
+- The plugin README says what the mod writes, and that it writes nothing but the saved copy of a large command output.
+
 ## 1.1.0 - 2026-10-06
 
 LeakStop now also keeps secrets out of what tools return and out of your own messages. Requires Claude Code 2.1.287 or later, as before.

@@ -99,7 +99,8 @@ test('a medium finding is held in strict mode', { options: { mode: 'strict' } },
 
 // --- Writing a secret into files git ignores ---------------------------------------
 
-const ignoring = (...ignored: string[]) => (argv: string[]) => (argv[0] === 'check-ignore' ? { exitCode: ignored.includes(argv[argv.length - 1] as string) ? 0 : 1 } : undefined)
+// The path to check is not an argument: it travels on the standard input, NUL-terminated.
+const ignoring = (...ignored: string[]) => (argv: string[], init?: any) => (argv[0] === 'check-ignore' ? { exitCode: ignored.includes(String(init?.stdin ?? '').replace(/\0$/, '')) ? 0 : 1 } : undefined)
 
 test('a secret written into a git-ignored .env passes, whether by heredoc or redirect', async ($, on) => {
   const secret = token()
@@ -320,7 +321,9 @@ test('the search looks in the folders it was given, with a bounded find', async 
   answerWith(on, CANCEL)
   const repo = gitScript(on, finds())
   await bash($, 'grep -r KEY src config')
-  expect(repo.calls.map((c) => c.slice(0, 4))).toEqual([['find', 'src', '-maxdepth', '8'], ['find', 'config', '-maxdepth', '8']])
+  // The command is fixed text; the folder is the working directory.
+  expect(repo.calls.map((c) => c.slice(0, 4))).toEqual([['find', '.', '-maxdepth', '8'], ['find', '.', '-maxdepth', '8']])
+  expect(repo.inits.map((init) => init?.cwd)).toEqual(['src', 'config'])
   expect(repo.inits.every((init) => init?.timeoutMs === 5000)).toBe(true)
 })
 
@@ -529,6 +532,30 @@ test('git add and git commit in one command scan the files the add would stage',
   expect(r.deny.includes(secret)).toBe(false)
   // Staging only a named file ignores other untracked files.
   expect(ran(await bash($, 'git add README.md && git commit -m x'))).toBe(true)
+})
+
+test('git add of named paths and git commit scan only the unstaged changes in those paths', async ($, on) => {
+  const secret = token('npm-token')
+  toolsRun(on)
+  const diff = [diffAdding('src/a.ts', 3, [`const t = "${secret}"`]), diffAdding('src/other.ts', 9, [`const t = "${secret}"`])].join('\n')
+  const repo = gitScript(on, (argv) => (argv[0] === 'diff' && argv.includes('--relative') ? diff : undefined))
+  const r = await bash($, 'git add src/a.ts && git commit -m x')
+  expect(isDenied(r)).toBe(true)
+  expect(r.deny.includes('src/a.ts:3')).toBe(true)
+  expect(r.deny.includes('src/other.ts')).toBe(false)
+  // No path is an argument of the command: git is asked for the folder's changes and the paths are applied here.
+  expect(repo.calls.some((c) => c.includes('--') || c.includes('src/a.ts'))).toBe(false)
+  expect(ran(await bash($, 'git add src/clean.ts && git commit -m x'))).toBe(true)
+})
+
+test('the path git check-ignore is asked about is not part of its command', async ($, on) => {
+  toolsRun(on)
+  answerWith(on, CANCEL)
+  const repo = gitScript(on, ignoring('.env'))
+  await bash($, `echo "ANTHROPIC_API_KEY=${token()}" >> .env`)
+  const ask = repo.calls.filter((c) => c[0] === 'check-ignore')
+  expect(ask.length > 0).toBe(true)
+  for (const call of ask) expect(call).toEqual(['check-ignore', '-q', '-z', '--stdin'])
 })
 
 test('git push with a secret in the pending commits is blocked', async ($, on) => {
