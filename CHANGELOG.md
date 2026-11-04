@@ -2,6 +2,13 @@
 
 All notable changes to LeakStop. It follows [semantic versioning](https://semver.org); see "Stability and versioning" in the README for what is part of the public interface.
 
+## Unreleased
+
+Documentation only. No change to what LeakStop detects or how it decides.
+
+- Both READMEs show the one-step install, `/plugin install leakstop --marketplace AlexandreMartinezOlmos/claude-code-leakstop`, which works on Claude Code 2.1.292 or later. The two-step install stays for 2.1.287 to 2.1.291.
+- The README now says that a fresh install reports two unset options (`mode` and `statusLine`), not one.
+
 ## 1.1.0 - 2026-10-06
 
 LeakStop now also keeps secrets out of what tools return and out of your own messages. Requires Claude Code 2.1.287 or later, as before.
