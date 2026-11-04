@@ -10,6 +10,16 @@ It runs entirely on your machine. No network, no AI model, no accounts. It never
 
 Claude Code 2.1.287 or later. LeakStop is a Claude Code *mod*, a kind of plugin that is on by default from that version.
 
+## Install
+
+On Claude Code 2.1.292 or later, one command adds the marketplace and installs LeakStop:
+
+```
+/plugin install leakstop --marketplace AlexandreMartinezOlmos/claude-code-leakstop
+```
+
+On 2.1.287 to 2.1.291, run `/plugin marketplace add AlexandreMartinezOlmos/claude-code-leakstop` first, then `/plugin install leakstop@leakstop`. In a session that is already open, run `/reload-plugins` afterwards.
+
 ## What it watches
 
 - **Files Claude writes or edits:** private keys, and tokens from AWS, GitHub, GitLab, Anthropic, OpenAI, Stripe, Slack, Google, npm and Hugging Face; passwords inside URLs; JWTs; `Authorization` headers; and `password = "…"`-style assignments.

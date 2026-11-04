@@ -43,7 +43,14 @@ You need **Claude Code 2.1.287 or later** (check with `claude --version`). LeakS
 
 ### Inside Claude Code
 
-Run these three commands:
+On Claude Code 2.1.292 or later, one command adds the marketplace and installs LeakStop:
+
+```
+/plugin install leakstop --marketplace AlexandreMartinezOlmos/claude-code-leakstop
+/reload-plugins
+```
+
+On 2.1.287 to 2.1.291, add the marketplace first:
 
 ```
 /plugin marketplace add AlexandreMartinezOlmos/claude-code-leakstop
@@ -52,6 +59,14 @@ Run these three commands:
 ```
 
 ### From your terminal
+
+On Claude Code 2.1.292 or later:
+
+```
+claude plugin install leakstop --marketplace AlexandreMartinezOlmos/claude-code-leakstop
+```
+
+On 2.1.287 to 2.1.291:
 
 ```
 claude plugin marketplace add AlexandreMartinezOlmos/claude-code-leakstop
@@ -64,7 +79,7 @@ Then start Claude Code (or run `/reload-plugins` in a session that is already op
 
 Open `/plugin`: LeakStop should be listed as active. Then run `/leakstop`: it opens a panel with this session's findings (empty at first). If LeakStop is ever missing from `/plugin`, nothing is protecting you (see [Limitations](#limitations)).
 
-After installing you may see a note that "1 userConfig option is not yet set". That is fine: until you choose a [protection level](#protection-level), LeakStop runs in `standard` mode.
+After installing you may see a note that "2 userConfig options not yet set". That is fine: until you choose a [protection level](#protection-level), LeakStop runs in `standard` mode, and the status line stays off.
 
 ### Update
 
@@ -290,7 +305,7 @@ LeakStop is a safety net, not a wall. Please read this part.
 - **I want to try it without risk.** Switch to `monitor` mode: it only warns and logs, and `/leakstop` shows what it would have held.
 - **It says `.leakstop.json` has a problem.** The message says what was ignored and why. Fix the file and run `/leakstop reload` (or `/reload-plugins`).
 - **I updated but it still behaves like the old version.** Restart Claude Code. `claude plugin list` shows which version is installed.
-- **`claude plugin install` says the marketplace is not found.** Add it first: `claude plugin marketplace add AlexandreMartinezOlmos/claude-code-leakstop`.
+- **`claude plugin install` says the marketplace is not found.** Add it first: `claude plugin marketplace add AlexandreMartinezOlmos/claude-code-leakstop`, or, on Claude Code 2.1.292 or later, install with `claude plugin install leakstop --marketplace AlexandreMartinezOlmos/claude-code-leakstop`, which adds it for you.
 
 ## Contributing
 
